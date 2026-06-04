@@ -1,0 +1,31 @@
+id: refactor-pricing
+title: Refactor duplicated Rust pricing logic
+description: Remove duplicated discount calculation logic while preserving behavior and tests.
+fixturePath: fixture
+promptFile: prompt.md
+setup:
+  - cargo fetch
+checks:
+  - name: unit-tests
+    command: cargo test
+  - name: typecheck
+    command: cargo check
+  - name: clippy
+    command: cargo clippy --all-targets -- -D warnings
+  - name: refactor-check
+    command: node scripts/check-refactor.mjs
+success:
+  requiredChecks:
+    - unit-tests
+    - typecheck
+    - clippy
+    - refactor-check
+judge:
+  unrelatedChangePolicy: fail
+  allowedChangePaths:
+    - crates/**
+    - scripts/**
+    - tests/**
+    - Cargo.toml
+    - Cargo.lock
+    - README.md

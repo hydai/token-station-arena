@@ -1,0 +1,18 @@
+{
+  "name": "token-station-arena",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Automated multi-model Claude Code benchmark and article generator for models.bytefuture.ai.",
+  "scripts": {
+    "benchmark": "node benchmark/scripts/run-benchmark.ts",
+    "judge": "node benchmark/scripts/judge-run.ts",
+    "evaluate": "node benchmark/scripts/evaluate-run.ts",
+    "import-token-dump": "node benchmark/scripts/import-token-dump.ts",
+    "generate-article": "node benchmark/scripts/generate-article.ts",
+    "check": "node --test benchmark/test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

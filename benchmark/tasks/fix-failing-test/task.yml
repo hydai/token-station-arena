@@ -1,0 +1,27 @@
+id: fix-failing-test
+title: Fix a failing Rust unit test
+description: Repair the pricing implementation so the provided test suite passes without changing the public API.
+fixturePath: fixture
+promptFile: prompt.md
+setup:
+  - cargo fetch
+checks:
+  - name: unit-tests
+    command: cargo test
+  - name: typecheck
+    command: cargo check
+  - name: clippy
+    command: cargo clippy --all-targets -- -D warnings
+success:
+  requiredChecks:
+    - unit-tests
+    - typecheck
+    - clippy
+judge:
+  unrelatedChangePolicy: fail
+  allowedChangePaths:
+    - crates/**
+    - tests/**
+    - Cargo.toml
+    - Cargo.lock
+    - README.md

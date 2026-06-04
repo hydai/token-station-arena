@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Bash(cargo fetch)",
+      "Bash(cargo test)",
+      "Bash(cargo check)",
+      "Bash(cargo clippy --all-targets -- -D warnings)",
+      "Bash(node scripts/check-refactor.mjs)",
+      "Bash(git diff *)",
+      "Bash(git status *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(cargo publish *)"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+[workspace]
+members = [
+  "crates/catalog-core",
+  "crates/catalog-api",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

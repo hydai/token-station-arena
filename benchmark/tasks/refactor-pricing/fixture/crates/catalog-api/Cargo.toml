@@ -1,0 +1,10 @@
+[package]
+name = "catalog-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+catalog-core = { path = "../catalog-core" }
+tokio.workspace = true

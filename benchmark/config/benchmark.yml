@@ -1,0 +1,24 @@
+benchmark:
+  runsPerTaskModel: 3
+  timeoutSeconds: 1800
+  outputDir: benchmark/runs
+  reportDir: benchmark/reports
+  claude:
+    baseUrl: https://models.bytefuture.ai
+    outputFormat: json
+    projectSettingsFile: .claude/settings.json
+    disableExperimentalBetas: true
+  tokenStation:
+    enabled: true
+    mode: backend-dump
+    correlation: execution-time-window
+    dumpPath: benchmark/reports/token-station-usage.json
+    matchWindowPaddingSeconds: 60
+  judge:
+    enabled: true
+    provider: models.bytefuture.ai
+    model: anthropic/claude-opus-4-6
+    minimumScore: 4
+  article:
+    title: "Comparing Claude Code Tasks Across Models on ByteFuture"
+    outputFile: benchmark/reports/article.md

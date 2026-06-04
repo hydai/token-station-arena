@@ -1,0 +1,49 @@
+models:
+  - id: gpt-oss-20b
+    displayName: GPT OSS 20B
+    provider: models.bytefuture.ai
+    model: groq/gpt-oss-20b
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: gpt-oss-120b
+    displayName: GPT OSS 120B
+    provider: models.bytefuture.ai
+    model: groq/gpt-oss-120b
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: deepseek-v4-flash
+    displayName: DeepSeek V4 Flash
+    provider: models.bytefuture.ai
+    model: deepseek/deepseek-v4-flash
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: deepseek-v4-pro
+    displayName: DeepSeek V4 Pro
+    provider: models.bytefuture.ai
+    model: deepseek/deepseek-v4-pro
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: kimi-k2-5
+    displayName: Kimi K2.5
+    provider: models.bytefuture.ai
+    model: kimi/kimi-k2.5
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: nemotron-3-super
+    displayName: Nemotron 3 Super
+    provider: models.bytefuture.ai
+    model: deepinfra/nemotron-3-super
+    claudeModelStrategy: custom-model-option
+    enabled: true
+
+  - id: nemotron-3-nano
+    displayName: Nemotron 3 Nano
+    provider: models.bytefuture.ai
+    model: deepinfra/nemotron-3-nano
+    claudeModelStrategy: custom-model-option
+    enabled: true
