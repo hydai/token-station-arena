@@ -2,6 +2,7 @@
   "name": "token-station-arena",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Automated multi-model Claude Code benchmark and article generator for models.bytefuture.ai.",
   "scripts": {

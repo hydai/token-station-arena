@@ -238,6 +238,10 @@ The article includes:
 - `benchmark/config/models.yml`: model list and provider model IDs.
 - `.env.example`: required environment variables.
 
+## License
+
+Apache-2.0. See `LICENSE`.
+
 ## Development Notes
 
 Run checks before committing changes:
