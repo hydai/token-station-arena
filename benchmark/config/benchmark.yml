@@ -1,6 +1,7 @@
 benchmark:
   runsPerTaskModel: 3
   timeoutSeconds: 1800
+  jobs: 1
   outputDir: benchmark/runs
   reportDir: benchmark/reports
   claude:

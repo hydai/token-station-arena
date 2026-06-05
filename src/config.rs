@@ -104,6 +104,7 @@ models:
 benchmark:
   runsPerTaskModel: 3
   timeoutSeconds: 1800
+  jobs: 2
   outputDir: benchmark/runs
   reportDir: benchmark/reports
   claude:
@@ -129,6 +130,7 @@ benchmark:
         let cfg = parse_benchmark_config(yaml).unwrap();
         assert_eq!(cfg.runs_per_task_model, 3);
         assert_eq!(cfg.timeout_seconds, 1800);
+        assert_eq!(cfg.jobs, Some(2));
         assert_eq!(cfg.claude.base_url, "https://bec.bytefuture.ai/v1");
         assert!(cfg.claude.disable_experimental_betas);
         assert_eq!(cfg.token_station.match_window_padding_seconds, Some(60));

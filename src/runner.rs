@@ -100,6 +100,7 @@ pub struct BenchmarkArgs {
     pub models: Option<String>,
     pub runs: Option<u32>,
     pub timeout: Option<u64>,
+    pub jobs: Option<usize>,
     pub token_dump: Option<String>,
     pub skip_judge: bool,
     pub skip_article: bool,
@@ -119,6 +120,10 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     let tasks = select_tasks(&all_tasks, args.tasks.as_deref().unwrap_or("all"))?;
     let runs_per_task_model = args.runs.unwrap_or(benchmark.runs_per_task_model);
     let timeout_seconds = args.timeout.unwrap_or(benchmark.timeout_seconds);
+    let jobs = args.jobs.or(benchmark.jobs).unwrap_or(1);
+    if jobs == 0 {
+        bail!("--jobs must be at least 1.");
+    }
     let output_dir = resolve_project_path(&paths.root_dir, &benchmark.output_dir);
     let report_dir = resolve_project_path(&paths.root_dir, &benchmark.report_dir);
 
@@ -129,6 +134,7 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
         runs_per_task_model
     );
     println!("Run artifacts: {}", output_dir.display());
+    println!("Parallel jobs: {jobs}");
 
     if args.dry_run {
         print_dry_run_plan(
@@ -149,34 +155,17 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     ensure_dir(&report_dir)?;
 
     let timeout = Duration::from_secs(timeout_seconds);
-    let mut current_run_ids = Vec::new();
-    for task in &tasks {
-        for model in &models {
-            for run_index in 1..=runs_per_task_model {
-                let result = run_single_benchmark(SingleBenchmarkInput {
-                    benchmark: &benchmark,
-                    task,
-                    model,
-                    run_index,
-                    output_dir: &output_dir,
-                    timeout,
-                    skip_judge: args.skip_judge,
-                    verbose: args.verbose,
-                })
-                .await?;
-                println!(
-                    "{}: {} ({})",
-                    result.run_id,
-                    result.completion.status.as_str(),
-                    result.completion.reason
-                );
-                if args.verbose {
-                    print_verbose_run_failure_details(&output_dir.join(&result.run_id), &result);
-                }
-                current_run_ids.push(result.run_id.clone());
-            }
-        }
-    }
+    let run_plans = build_run_plans(&tasks, &models, runs_per_task_model);
+    let current_run_ids = run_benchmark_plans(RunPlansInput {
+        benchmark: &benchmark,
+        run_plans,
+        output_dir: &output_dir,
+        timeout,
+        skip_judge: args.skip_judge,
+        verbose: args.verbose,
+        jobs,
+    })
+    .await?;
 
     let token_dump = args
         .token_dump
@@ -208,6 +197,149 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct RunPlan {
+    task: LoadedTask,
+    model: ModelConfig,
+    run_index: u32,
+}
+
+fn build_run_plans(
+    tasks: &[LoadedTask],
+    models: &[ModelConfig],
+    runs_per_task_model: u32,
+) -> Vec<RunPlan> {
+    let mut run_plans = Vec::new();
+    for task in tasks {
+        for model in models {
+            for run_index in 1..=runs_per_task_model {
+                run_plans.push(RunPlan {
+                    task: task.clone(),
+                    model: model.clone(),
+                    run_index,
+                });
+            }
+        }
+    }
+    run_plans
+}
+
+struct RunPlansInput<'a> {
+    benchmark: &'a BenchmarkConfig,
+    run_plans: Vec<RunPlan>,
+    output_dir: &'a Path,
+    timeout: Duration,
+    skip_judge: bool,
+    verbose: bool,
+    jobs: usize,
+}
+
+async fn run_benchmark_plans(input: RunPlansInput<'_>) -> Result<Vec<String>> {
+    if input.jobs == 1 {
+        return run_benchmark_plans_serial(&input).await;
+    }
+    run_benchmark_plans_parallel(input).await
+}
+
+async fn run_benchmark_plans_serial(input: &RunPlansInput<'_>) -> Result<Vec<String>> {
+    let mut current_run_ids = Vec::new();
+    for plan in &input.run_plans {
+        let result = run_single_benchmark(SingleBenchmarkInput {
+            benchmark: input.benchmark,
+            task: &plan.task,
+            model: &plan.model,
+            run_index: plan.run_index,
+            output_dir: input.output_dir,
+            timeout: input.timeout,
+            skip_judge: input.skip_judge,
+            verbose: input.verbose,
+        })
+        .await?;
+        print_run_result(input.output_dir, &result, input.verbose);
+        current_run_ids.push(result.run_id.clone());
+    }
+    Ok(current_run_ids)
+}
+
+async fn run_benchmark_plans_parallel(input: RunPlansInput<'_>) -> Result<Vec<String>> {
+    let mut pending = input.run_plans.into_iter();
+    let mut running = tokio::task::JoinSet::new();
+    let mut active = 0usize;
+    let mut current_run_ids = Vec::new();
+
+    loop {
+        while active < input.jobs {
+            let Some(plan) = pending.next() else {
+                break;
+            };
+            spawn_benchmark_plan(
+                &mut running,
+                input.benchmark,
+                plan,
+                input.output_dir,
+                input.timeout,
+                input.skip_judge,
+                input.verbose,
+            );
+            active += 1;
+        }
+
+        if active == 0 {
+            break;
+        }
+
+        let joined = running
+            .join_next()
+            .await
+            .context("benchmark worker set ended unexpectedly")?;
+        active -= 1;
+        let result = joined.context("benchmark worker panicked")??;
+        print_run_result(input.output_dir, &result, input.verbose);
+        current_run_ids.push(result.run_id.clone());
+    }
+
+    Ok(current_run_ids)
+}
+
+fn spawn_benchmark_plan(
+    running: &mut tokio::task::JoinSet<Result<RunResult>>,
+    benchmark: &BenchmarkConfig,
+    plan: RunPlan,
+    output_dir: &Path,
+    timeout: Duration,
+    skip_judge: bool,
+    verbose: bool,
+) {
+    let benchmark = benchmark.clone();
+    let output_dir = output_dir.to_path_buf();
+    running.spawn(async move {
+        run_single_benchmark(SingleBenchmarkInput {
+            benchmark: &benchmark,
+            task: &plan.task,
+            model: &plan.model,
+            run_index: plan.run_index,
+            output_dir: &output_dir,
+            timeout,
+            skip_judge,
+            verbose,
+        })
+        .await
+    });
+}
+
+fn print_run_result(output_dir: &Path, result: &RunResult, verbose: bool) {
+    println!(
+        "{}: {} in {} ({})",
+        result.run_id,
+        result.completion.status.as_str(),
+        format_duration_ms(result.duration_ms),
+        result.completion.reason
+    );
+    if verbose {
+        print_verbose_run_failure_details(&output_dir.join(&result.run_id), result);
+    }
 }
 
 fn load_current_run_results(output_dir: &Path, run_ids: &[String]) -> Result<Vec<RunResult>> {
@@ -655,6 +787,19 @@ async fn capture_diff(workspace_dir: &Path, secrets: &[String]) -> String {
     }
 }
 
+fn format_duration_ms(duration_ms: u64) -> String {
+    if duration_ms < 1_000 {
+        return format!("{duration_ms}ms");
+    }
+    let total_seconds = duration_ms as f64 / 1_000.0;
+    if total_seconds < 60.0 {
+        return format!("{total_seconds:.1}s");
+    }
+    let minutes = duration_ms / 60_000;
+    let seconds = (duration_ms % 60_000) / 1_000;
+    format!("{minutes}m {seconds}s")
+}
+
 async fn capture_changed_files(workspace_dir: &Path, secrets: &[String]) -> Vec<String> {
     let result = run_shell_command(
         "git status --short",
@@ -906,6 +1051,7 @@ fn print_dry_run_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{SuccessConfig, TaskConfig};
 
     #[test]
     fn sanitize_replaces_disallowed_runs_with_a_single_dash() {
@@ -928,6 +1074,45 @@ mod tests {
         assert_eq!(
             id,
             "2026-06-04T14-03-12-000Z_fix-failing-test_deepseek-v4-flash_001"
+        );
+    }
+
+    #[test]
+    fn format_duration_ms_keeps_subsecond_precision_and_minutes() {
+        assert_eq!(format_duration_ms(250), "250ms");
+        assert_eq!(format_duration_ms(1_234), "1.2s");
+        assert_eq!(format_duration_ms(65_432), "1m 5s");
+    }
+
+    #[test]
+    fn build_run_plans_expands_tasks_models_and_runs_in_order() {
+        let tasks = vec![loaded_task("task-a"), loaded_task("task-b")];
+        let models = vec![model("model-a"), model("model-b")];
+
+        let plans = build_run_plans(&tasks, &models, 2);
+
+        let keys: Vec<_> = plans
+            .iter()
+            .map(|plan| {
+                (
+                    plan.task.config.id.as_str(),
+                    plan.model.id.as_str(),
+                    plan.run_index,
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("task-a", "model-a", 1),
+                ("task-a", "model-a", 2),
+                ("task-a", "model-b", 1),
+                ("task-a", "model-b", 2),
+                ("task-b", "model-a", 1),
+                ("task-b", "model-a", 2),
+                ("task-b", "model-b", 1),
+                ("task-b", "model-b", 2),
+            ]
         );
     }
 
@@ -1002,5 +1187,39 @@ mod tests {
         assert!(truncated.starts_with("[output truncated; omitted "));
         assert!(truncated.ends_with("tail"));
         assert!(!truncated.ends_with(&text));
+    }
+
+    fn loaded_task(id: &str) -> LoadedTask {
+        LoadedTask {
+            config: TaskConfig {
+                id: id.to_string(),
+                title: id.to_string(),
+                description: String::new(),
+                fixture_path: "fixture".to_string(),
+                prompt_file: "prompt.md".to_string(),
+                setup: vec![],
+                checks: vec![],
+                success: SuccessConfig {
+                    required_checks: vec![],
+                },
+                judge: None,
+                expected_files: None,
+            },
+            task_dir: std::path::PathBuf::from(id),
+            fixture_dir: std::path::PathBuf::from("fixture"),
+            prompt_path: std::path::PathBuf::from("prompt.md"),
+            prompt: String::new(),
+        }
+    }
+
+    fn model(id: &str) -> ModelConfig {
+        ModelConfig {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            provider: "models.bytefuture.ai".to_string(),
+            model: format!("provider/{id}"),
+            claude_model_strategy: "custom-model-option".to_string(),
+            enabled: true,
+        }
     }
 }

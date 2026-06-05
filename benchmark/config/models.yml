@@ -46,7 +46,7 @@ models:
     provider: models.bytefuture.ai
     model: groq/kimi-k2
     claudeModelStrategy: custom-model-option
-    enabled: true
+    enabled: false
 
   # Target latest Kimi model. Disabled because the current Claude Code +
   # gateway flow returns a reasoning_content/tool-call format 400.

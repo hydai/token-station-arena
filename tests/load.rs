@@ -15,8 +15,8 @@ fn loads_the_enabled_model_set() {
         .collect();
     assert_eq!(
         enabled.len(),
-        7,
-        "expected 7 enabled models, got {enabled:?}"
+        6,
+        "expected 6 enabled models, got {enabled:?}"
     );
     assert!(models.iter().any(|m| m.model == "openai/gpt-5.5"));
     assert!(models.iter().any(|m| m.model == "minimax/MiniMax-M2.7"));
@@ -26,11 +26,12 @@ fn loads_the_enabled_model_set() {
     assert!(models
         .iter()
         .any(|m| m.model == "nvidia-nim/nemotron-3-ultra-550b-a55b"));
-    assert!(models.iter().any(|m| m.model == "groq/kimi-k2"));
-
     assert!(models
         .iter()
         .any(|m| m.model == "kimi/kimi-k2.5" && !m.enabled));
+    assert!(models
+        .iter()
+        .any(|m| m.model == "groq/kimi-k2" && !m.enabled));
     assert!(models
         .iter()
         .any(|m| m.model == "deepseek/deepseek-v4-pro" && !m.enabled));
@@ -48,6 +49,7 @@ fn loads_the_real_benchmark_config() {
     let cfg = load_benchmark_config(&paths).expect("load benchmark.yml");
     assert_eq!(cfg.runs_per_task_model, 3);
     assert_eq!(cfg.timeout_seconds, 1800);
+    assert_eq!(cfg.jobs, Some(1));
     assert_eq!(cfg.judge.model, "anthropic/claude-opus-4-6");
     assert_eq!(cfg.token_station.match_window_padding_seconds, Some(60));
 }

@@ -61,6 +61,8 @@ struct BenchmarkCommand {
     #[arg(long)]
     timeout: Option<u64>,
     #[arg(long)]
+    jobs: Option<usize>,
+    #[arg(long)]
     token_dump: Option<String>,
     #[arg(long)]
     skip_judge: bool,
@@ -81,6 +83,7 @@ pub async fn run() -> Result<()> {
                 models: command.models,
                 runs: command.runs,
                 timeout: command.timeout,
+                jobs: command.jobs,
                 token_dump: command.token_dump,
                 skip_judge: command.skip_judge,
                 skip_article: command.skip_article,

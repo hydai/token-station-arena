@@ -24,6 +24,8 @@ pub struct ModelConfig {
 pub struct BenchmarkConfig {
     pub runs_per_task_model: u32,
     pub timeout_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<usize>,
     pub output_dir: String,
     pub report_dir: String,
     pub claude: ClaudeConfig,
