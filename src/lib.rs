@@ -6,6 +6,7 @@ pub mod command;
 pub mod config;
 pub mod evaluator;
 pub mod fs_utils;
+pub mod judge;
 pub mod models;
 pub mod tasks;
 pub mod types;
