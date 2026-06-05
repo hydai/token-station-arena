@@ -4,7 +4,7 @@ Automated Claude Code benchmark tooling for running the same Rust coding tasks a
 
 The MVP includes:
 
-- A TypeScript/Node.js benchmark runner.
+- A Rust benchmark runner built as a single binary (`tokio`, `clap`, `serde`).
 - Canonical ByteFuture model configuration.
 - Three Rust benchmark tasks with isolated fixtures.
 - Deterministic checks with `cargo test`, `cargo check`, `cargo clippy`, and task-specific scripts.
@@ -14,14 +14,10 @@ The MVP includes:
 
 ## Requirements
 
-- Node.js 24 or newer.
-- npm.
-- Rust and Cargo.
+- Rust and Cargo (1.85 or newer).
 - `git`.
 - `claude` available on `PATH` for real benchmark runs.
 - A ByteFuture API key exposed as `ANTHROPIC_API_KEY`.
-
-There are no npm package dependencies in the current MVP, so `npm install` is not required unless dependencies are added later.
 
 ## Setup
 
@@ -46,38 +42,41 @@ source .env
 set +a
 ```
 
-## Validate The Project
+## Build And Validate
 
-Run the local smoke tests:
+Build the optimized binary and run the test suite:
 
 ```bash
-npm run check
+cargo build --release
+cargo test
 ```
 
 Preview the benchmark plan without calling Claude or ByteFuture:
 
 ```bash
-npm run benchmark -- --tasks all --models all --runs 1 --dry-run
+cargo run --release -- benchmark --tasks all --models all --runs 1 --dry-run
 ```
+
+After `cargo build --release`, you can invoke the binary directly as `target/release/token-station-arena <command>`.
 
 ## Run Benchmarks
 
 Run one task against a small model subset:
 
 ```bash
-npm run benchmark -- --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5 --runs 1
+cargo run --release -- benchmark --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5 --runs 1
 ```
 
 Run all configured tasks against all enabled models:
 
 ```bash
-npm run benchmark -- --tasks all --models all
+cargo run --release -- benchmark --tasks all --models all
 ```
 
 Skip the LLM judge when you only want deterministic checks:
 
 ```bash
-npm run benchmark -- --tasks add-api-endpoint --models nemotron-3-super --runs 1 --skip-judge
+cargo run --release -- benchmark --tasks add-api-endpoint --models nemotron-3-super --runs 1 --skip-judge
 ```
 
 Useful options:
@@ -125,6 +124,8 @@ Each task lives under `benchmark/tasks/<task-id>/`:
 - `fixture/`: isolated Rust workspace copied for each run.
 - `fixture/.claude/settings.json`: Claude Code permission policy for that fixture.
 
+Each fixture is its own Cargo workspace; the orchestrator excludes `benchmark/tasks` and `benchmark/runs` from its own workspace so `cargo build` never compiles them.
+
 ## Models
 
 Models are configured in `benchmark/config/models.yml`.
@@ -166,13 +167,13 @@ workspace/
 Re-run deterministic checks for an existing run:
 
 ```bash
-npm run evaluate -- --run-id <run-id>
+cargo run --release -- evaluate --run-id <run-id>
 ```
 
 Re-run judge scoring for an existing run:
 
 ```bash
-npm run judge -- --run-id <run-id>
+cargo run --release -- judge --run-id <run-id>
 ```
 
 ## Import Token Station Usage
@@ -180,7 +181,7 @@ npm run judge -- --run-id <run-id>
 After benchmark execution, export or dump Token Station usage from the backend to JSON, then import it:
 
 ```bash
-npm run import-token-dump -- --input benchmark/reports/token-station-usage.json --runs benchmark/runs
+cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs
 ```
 
 The importer matches usage records to benchmark runs by:
@@ -215,22 +216,10 @@ The importer accepts common dump shapes such as:
 Generate or refresh the Markdown report:
 
 ```bash
-npm run generate-article -- --input benchmark/runs --output benchmark/reports/article.md
+cargo run --release -- generate-article --input benchmark/runs --output benchmark/reports/article.md
 ```
 
-The article includes:
-
-- methodology,
-- tested models,
-- task list,
-- summary table,
-- per-task results,
-- token and latency comparison,
-- stability comparison,
-- judge scores,
-- quality notes,
-- reproducible commands,
-- limitations and conclusion.
+The article includes methodology, tested models, task list, a summary table, per-task results, token and latency comparison, three-run stability, judge scores, quality notes, reproducible commands, limitations, and a conclusion.
 
 ## Configuration Files
 
@@ -247,8 +236,10 @@ Apache-2.0. See `LICENSE`.
 Run checks before committing changes:
 
 ```bash
-npm run check
-npm run benchmark -- --tasks all --models all --runs 1 --dry-run
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+cargo run --release -- benchmark --tasks all --models all --runs 1 --dry-run
 ```
 
 When adding a new task:
@@ -262,5 +253,5 @@ When adding a new task:
 When adding a new model, update `benchmark/config/models.yml` and verify it appears in:
 
 ```bash
-npm run benchmark -- --tasks all --models all --dry-run
+cargo run --release -- benchmark --tasks all --models all --dry-run
 ```
