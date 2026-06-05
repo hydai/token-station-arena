@@ -111,11 +111,28 @@ The system consists of five main components:
    - Converts benchmark results into a Markdown guide.
    - Produces summary tables, task-level details, model-level observations, and reproducible commands.
 
-The benchmark orchestration tooling should be implemented in TypeScript/Node.js. The benchmark fixtures themselves should be Rust projects.
+The benchmark orchestration tooling should be implemented in Rust as a single binary crate. It uses `tokio` for subprocess management (running `claude`, `cargo`, and `git` with timeout enforcement and output capture), `clap` for the command-line interface, and `serde` for configuration parsing and result serialization. The five components above map to Rust modules under `src/`. The benchmark fixtures themselves are separate Rust projects (Cargo workspaces) that are copied into an isolated working directory for each run and are never compiled as part of the orchestrator crate.
 
 ## 8. Repository Structure
 
 ```text
+Cargo.toml
+Cargo.lock
+src/
+  main.rs            # CLI entry point; dispatches subcommands
+  cli.rs             # clap argument definitions and subcommand handlers
+  types.rs           # serde data model (camelCase) and status enums
+  config.rs          # load benchmark.yml and models.yml; project paths
+  models.rs          # model selection
+  tasks.rs           # task loading, selection, and validation
+  command.rs         # tokio subprocess execution: timeout, output cap, redaction
+  evaluator.rs       # deterministic checks and completion classification
+  judge.rs           # LLM judge invocation and response normalization
+  token_station.rs   # Token Station dump import and correlation
+  article.rs         # Markdown article generation
+  fs_utils.rs        # filesystem helpers
+  runner.rs          # benchmark orchestration loop
+tests/               # integration tests
 benchmark/
   config/
     models.yml
@@ -124,7 +141,7 @@ benchmark/
     fix-failing-test/
       task.yml
       prompt.md
-      fixture/
+      fixture/         # self-contained Rust Cargo workspace
         .claude/
           settings.json
     add-api-endpoint/
@@ -137,24 +154,11 @@ benchmark/
     .gitkeep
   reports/
     .gitkeep
-  scripts/
-    run-benchmark.ts
-    evaluate-run.ts
-    judge-run.ts
-    import-token-dump.ts
-    generate-article.ts
-  src/
-    cli.ts
-    models.ts
-    tasks.ts
-    runner.ts
-    evaluator.ts
-    judge.ts
-    token-station.ts
-    article.ts
 ```
 
 The final structure may vary depending on the host repository, but the implementation should keep task definitions, run artifacts, and generated reports clearly separated.
+
+Because each fixture under `benchmark/tasks/*/fixture/` is its own Cargo workspace, the orchestrator's root `Cargo.toml` must exclude `benchmark/tasks` and `benchmark/runs` from its workspace so that building the orchestrator never attempts to compile fixture or run-artifact crates.
 
 ## 9. Configuration
 
@@ -560,12 +564,14 @@ The article should be written as a practical guide, not as a press release.
 The MVP should expose commands similar to:
 
 ```bash
-npm run benchmark -- --tasks all --models all
-npm run benchmark -- --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5,nemotron-3-super
-npm run judge -- --run-id <runId>
-npm run import-token-dump -- --input reports/token-station-usage.json --runs runs
-npm run generate-article -- --input runs --output reports/article.md
+cargo run --release -- benchmark --tasks all --models all
+cargo run --release -- benchmark --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5,nemotron-3-super
+cargo run --release -- judge --run-id <runId>
+cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs
+cargo run --release -- generate-article --input benchmark/runs --output benchmark/reports/article.md
 ```
+
+After `cargo build --release`, the compiled binary at `target/release/token-station-arena` exposes the same subcommands directly. `cargo test` runs the unit and integration test suite.
 
 Useful options:
 
@@ -651,7 +657,8 @@ The MVP is complete when:
   - `deepinfra/nemotron-3-nano`
 - A user can define at least three benchmark tasks.
 - Benchmark fixtures are Rust projects organized as a small workspace with a library crate, an Axum API crate, and unit/integration tests.
-- The benchmark orchestration tooling is implemented in TypeScript/Node.js.
+- The benchmark orchestration tooling is implemented in Rust as a single binary crate.
+- The orchestrator builds with `cargo build --release` and passes `cargo clippy --all-targets -- -D warnings`.
 - The benchmark runs each task/model pair three independent times.
 - A single command can run all task/model combinations.
 - Each run produces structured JSON results.
@@ -670,7 +677,9 @@ The MVP is complete when:
 
 ### Phase 1: Local Runner
 
-- Create config loaders for models and tasks.
+- Scaffold the Cargo binary crate with the module layout above.
+- Implement the `serde`-based config, model, and task loaders.
+- Implement the `tokio` subprocess core in `command.rs` (timeout, output cap, secret redaction).
 - Implement isolated task workspace creation.
 - Implement `claude -p` invocation.
 - Capture logs and diffs.
@@ -746,7 +755,8 @@ The MVP is complete when:
 
 - Token Station usage will be imported from backend dumps and matched by execution time window plus model ID.
 - The first public fixture set will use Rust: a small workspace with a library crate, an Axum API crate, and unit/integration tests.
-- The benchmark runner will be implemented in TypeScript/Node.js.
+- The benchmark runner will be implemented in Rust as a single binary crate using `tokio`, `clap`, and `serde`.
+- YAML configuration is parsed with `serde_yaml_ng`; subprocess timeouts use `tokio::time::timeout` with a `SIGTERM`-then-`SIGKILL` escalation via `nix`.
 - Rust fixture permissions will be managed through project-local `.claude/settings.json` files.
 - The LLM judge is `anthropic/claude-opus-4-6`.
 - The judge pass threshold is `4`.
