@@ -5,11 +5,13 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
-use crate::article::generate_article;
+use crate::article::generate_article_for_runs;
 use crate::command::{format_command, redact_env, run_process, run_shell_command, RunOptions};
 use crate::config::{load_benchmark_config, load_models, project_paths, resolve_project_path};
 use crate::evaluator::{classify_completion, run_checks, CompletionInputs};
-use crate::fs_utils::{copy_dir, ensure_dir, path_exists, read_text, write_json, write_text};
+use crate::fs_utils::{
+    copy_dir, ensure_dir, path_exists, read_json, read_text, write_json, write_text,
+};
 use crate::judge::{run_judge, skipped_judge, JudgeRunInput};
 use crate::models::select_models;
 use crate::tasks::{load_tasks, select_tasks};
@@ -68,6 +70,27 @@ fn parse_claude_output(stdout: &str) -> Value {
             "stdoutArtifact": "stdout.txt",
         })
     })
+}
+
+fn claude_api_error(output: &Value) -> Option<String> {
+    let is_error = output
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let status = output.get("api_error_status").and_then(Value::as_i64);
+    if !is_error && status.is_none() {
+        return None;
+    }
+
+    let detail = output
+        .get("result")
+        .and_then(Value::as_str)
+        .or_else(|| output.get("error").and_then(Value::as_str))
+        .unwrap_or("Claude returned an API error.");
+    let prefix = status
+        .map(|code| format!("Claude API error {code}"))
+        .unwrap_or_else(|| "Claude API error".to_string());
+    Some(format!("{prefix}: {detail}"))
 }
 
 /// Options controlling a benchmark run, mirroring the CLI flags.
@@ -129,19 +152,20 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     ensure_dir(&report_dir)?;
 
     let timeout = Duration::from_secs(timeout_seconds);
+    let mut current_run_ids = Vec::new();
     for task in &tasks {
         for model in &models {
             for run_index in 1..=runs_per_task_model {
-                let result = run_single_benchmark(
-                    &benchmark,
+                let result = run_single_benchmark(SingleBenchmarkInput {
+                    benchmark: &benchmark,
                     task,
                     model,
                     run_index,
-                    &output_dir,
+                    output_dir: &output_dir,
                     timeout,
-                    args.skip_judge,
-                    args.verbose,
-                )
+                    skip_judge: args.skip_judge,
+                    verbose: args.verbose,
+                })
                 .await?;
                 println!(
                     "{}: {} ({})",
@@ -152,6 +176,7 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
                 if args.verbose {
                     print_verbose_run_failure_details(&output_dir.join(&result.run_id), &result);
                 }
+                current_run_ids.push(result.run_id.clone());
             }
         }
     }
@@ -175,7 +200,9 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
 
     if !args.skip_article {
         let article_path = resolve_project_path(&paths.root_dir, &benchmark.article.output_file);
-        let summary = generate_article(&output_dir, &article_path, &benchmark.article.title)?;
+        let article_runs = load_current_run_results(&output_dir, &current_run_ids)?;
+        let summary =
+            generate_article_for_runs(&article_runs, &article_path, &benchmark.article.title)?;
         println!(
             "Generated {} from {} run(s).",
             summary.output_path.display(),
@@ -186,16 +213,34 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_single_benchmark(
-    benchmark: &BenchmarkConfig,
-    task: &LoadedTask,
-    model: &ModelConfig,
+fn load_current_run_results(output_dir: &Path, run_ids: &[String]) -> Result<Vec<RunResult>> {
+    let mut runs = Vec::with_capacity(run_ids.len());
+    for run_id in run_ids {
+        runs.push(read_json(output_dir.join(run_id).join("result.json"))?);
+    }
+    Ok(runs)
+}
+
+struct SingleBenchmarkInput<'a> {
+    benchmark: &'a BenchmarkConfig,
+    task: &'a LoadedTask,
+    model: &'a ModelConfig,
     run_index: u32,
-    output_dir: &Path,
+    output_dir: &'a Path,
     timeout: Duration,
     skip_judge: bool,
     verbose: bool,
-) -> Result<RunResult> {
+}
+
+async fn run_single_benchmark(input: SingleBenchmarkInput<'_>) -> Result<RunResult> {
+    let benchmark = input.benchmark;
+    let task = input.task;
+    let model = input.model;
+    let run_index = input.run_index;
+    let output_dir = input.output_dir;
+    let timeout = input.timeout;
+    let skip_judge = input.skip_judge;
+    let verbose = input.verbose;
     let run_id = build_run_id(&task.config.id, &model.id, run_index);
     let run_dir = output_dir.join(&run_id);
     let workspace_dir = run_dir.join("workspace");
@@ -217,23 +262,21 @@ async fn run_single_benchmark(
         return Ok(result);
     }
 
-    let claude = run_claude(
+    let claude = run_claude(ClaudeInvocation {
         benchmark,
         task,
         model,
-        &workspace_dir,
+        workspace_dir: &workspace_dir,
         timeout,
-        &secrets,
-        &run_id,
+        secrets: &secrets,
+        run_id: &run_id,
         verbose,
-    )
+    })
     .await;
     write_text(run_dir.join("stdout.txt"), &claude.stdout)?;
     write_text(run_dir.join("stderr.txt"), &claude.stderr)?;
-    write_json(
-        run_dir.join("claude-output.json"),
-        &parse_claude_output(&claude.stdout),
-    )?;
+    let claude_output = parse_claude_output(&claude.stdout);
+    write_json(run_dir.join("claude-output.json"), &claude_output)?;
     write_json(
         run_dir.join("command-strategy.json"),
         &json!({
@@ -242,10 +285,26 @@ async fn run_single_benchmark(
         }),
     )?;
 
-    let checks = run_checks(task, &workspace_dir, &run_dir, timeout, &secrets).await?;
     let diff = capture_diff(&workspace_dir, &secrets).await;
     let changed_files = capture_changed_files(&workspace_dir, &secrets).await;
     write_text(run_dir.join("diff.patch"), &diff)?;
+
+    if let Some(error) = claude_api_error(&claude_output) {
+        let result = build_claude_error_result(ClaudeErrorResultInput {
+            run_id: &run_id,
+            task,
+            model,
+            run_index,
+            benchmark,
+            claude: &claude,
+            changed_files,
+            reason: error,
+        });
+        write_json(run_dir.join("result.json"), &result)?;
+        return Ok(result);
+    }
+
+    let checks = run_checks(task, &workspace_dir, &run_dir, timeout, &secrets).await?;
 
     let judge = if skip_judge || !benchmark.judge.enabled {
         skipped_judge(&benchmark.judge.model)
@@ -352,39 +411,43 @@ async fn prepare_workspace(
     None
 }
 
-async fn run_claude(
-    benchmark: &BenchmarkConfig,
-    task: &LoadedTask,
-    model: &ModelConfig,
-    workspace_dir: &Path,
+struct ClaudeInvocation<'a> {
+    benchmark: &'a BenchmarkConfig,
+    task: &'a LoadedTask,
+    model: &'a ModelConfig,
+    workspace_dir: &'a Path,
     timeout: Duration,
-    secrets: &[String],
-    run_id: &str,
+    secrets: &'a [String],
+    run_id: &'a str,
     verbose: bool,
-) -> CommandResult {
-    let env: Vec<(String, String)> = claude_env(benchmark, model).into_iter().collect();
+}
+
+async fn run_claude(input: ClaudeInvocation<'_>) -> CommandResult {
+    let env: Vec<(String, String)> = claude_env(input.benchmark, input.model)
+        .into_iter()
+        .collect();
     let args = vec![
         "--bare".to_string(),
         "-p".to_string(),
-        task.prompt.clone(),
+        input.task.prompt.clone(),
         "--settings".to_string(),
-        benchmark.claude.project_settings_file.clone(),
+        input.benchmark.claude.project_settings_file.clone(),
         "--model".to_string(),
-        model.model.clone(),
+        input.model.model.clone(),
         "--output-format".to_string(),
-        benchmark.claude.output_format.clone(),
+        input.benchmark.claude.output_format.clone(),
     ];
-    if verbose {
-        print_verbose_claude_invocation(run_id, model, &args);
+    if input.verbose {
+        print_verbose_claude_invocation(input.run_id, input.model, &args);
     }
     run_process(
         "claude",
         &args,
         &RunOptions {
-            cwd: workspace_dir.to_path_buf(),
+            cwd: input.workspace_dir.to_path_buf(),
             env,
-            timeout: Some(timeout),
-            secrets: secrets.to_vec(),
+            timeout: Some(input.timeout),
+            secrets: input.secrets.to_vec(),
         },
     )
     .await
@@ -728,6 +791,52 @@ fn build_infrastructure_error_result(
     }
 }
 
+struct ClaudeErrorResultInput<'a> {
+    run_id: &'a str,
+    task: &'a LoadedTask,
+    model: &'a ModelConfig,
+    run_index: u32,
+    benchmark: &'a BenchmarkConfig,
+    claude: &'a CommandResult,
+    changed_files: Vec<String>,
+    reason: String,
+}
+
+fn build_claude_error_result(input: ClaudeErrorResultInput<'_>) -> RunResult {
+    RunResult {
+        run_id: input.run_id.to_string(),
+        task_id: input.task.config.id.clone(),
+        model_id: input.model.id.clone(),
+        provider_model_id: input.model.model.clone(),
+        run_index: input.run_index,
+        provider: input.model.provider.clone(),
+        started_at: input.claude.started_at.clone(),
+        finished_at: input.claude.finished_at.clone(),
+        duration_ms: input.claude.duration_ms,
+        claude_exit_code: input.claude.exit_code,
+        claude: ClaudeRunMeta {
+            session_id: extract_claude_session_id(&input.claude.stdout),
+            output_format: input.benchmark.claude.output_format.clone(),
+            command_strategy: command_strategy_labels(),
+        },
+        checks: vec![],
+        completion: Completion {
+            status: CompletionStatus::Error,
+            reason: input.reason.clone(),
+        },
+        tokens: None,
+        judge: skipped_judge(&input.benchmark.judge.model),
+        artifacts: default_artifacts(),
+        changed_files: input.changed_files,
+        warnings: vec![input.reason],
+        human_audit: HumanAudit {
+            required_for_mvp: false,
+            score: None,
+            notes: String::new(),
+        },
+    }
+}
+
 fn print_dry_run_plan(
     benchmark: &BenchmarkConfig,
     tasks: &[LoadedTask],
@@ -803,6 +912,20 @@ mod tests {
 
         let ok = parse_claude_output(r#"{"a":1}"#);
         assert_eq!(ok["a"], 1);
+    }
+
+    #[test]
+    fn claude_api_error_extracts_status_and_message() {
+        let parsed = parse_claude_output(
+            r#"{"is_error":true,"api_error_status":404,"result":"model unavailable"}"#,
+        );
+        assert_eq!(
+            claude_api_error(&parsed).as_deref(),
+            Some("Claude API error 404: model unavailable")
+        );
+
+        let ok = parse_claude_output(r#"{"type":"result","is_error":false}"#);
+        assert!(claude_api_error(&ok).is_none());
     }
 
     #[test]

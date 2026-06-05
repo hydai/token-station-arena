@@ -139,7 +139,7 @@ pub fn classify_completion(inputs: &CompletionInputs) -> Completion {
         };
     }
 
-    let made_progress = !inputs.changed_files.is_empty() || inputs.checks.iter().any(|c| c.passed);
+    let made_progress = !inputs.changed_files.is_empty();
     if made_progress {
         return Completion {
             status: CompletionStatus::Partial,
@@ -341,6 +341,23 @@ mod tests {
     fn failed_required_no_progress_nonzero_exit_is_failed_with_code() {
         let task = make_task(&[], &["unit-tests"]);
         let checks = vec![check_result("unit-tests", false)];
+        let j = judge(true, true, None, false);
+        let c = classify_completion(&inputs(&task, &checks, &j, Some(1), &[]));
+        assert_eq!(c.status, CompletionStatus::Failed);
+        assert!(
+            c.reason.contains("exited with code 1"),
+            "reason: {}",
+            c.reason
+        );
+    }
+
+    #[test]
+    fn passed_baseline_checks_do_not_count_as_model_progress() {
+        let task = make_task(&[], &["unit-tests", "typecheck"]);
+        let checks = vec![
+            check_result("unit-tests", false),
+            check_result("typecheck", true),
+        ];
         let j = judge(true, true, None, false);
         let c = classify_completion(&inputs(&task, &checks, &j, Some(1), &[]));
         assert_eq!(c.status, CompletionStatus::Failed);

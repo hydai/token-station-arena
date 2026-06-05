@@ -430,6 +430,9 @@ fn render_conclusion(models: &[ModelAggregate]) -> String {
     if models.is_empty() {
         return "Run the benchmark to produce evidence-backed recommendations.".to_string();
     }
+    if models.iter().all(|model| model.passed == 0) {
+        return "No model produced a passing run in this run set. Treat the results as failure diagnostics rather than a model recommendation.".to_string();
+    }
     let best = models
         .iter()
         .max_by(|a, b| {
@@ -459,7 +462,18 @@ pub fn generate_article(
     title: &str,
 ) -> Result<GenerateSummary> {
     let runs = load_run_results(runs_dir)?;
-    let markdown = render_article(title, &runs);
+    generate_article_for_runs(&runs, output_path, title)
+}
+
+/// Renders and writes an article from an explicit run set. Benchmark execution
+/// uses this so stale artifacts from previous invocations do not leak into the
+/// current report.
+pub fn generate_article_for_runs(
+    runs: &[RunResult],
+    output_path: &Path,
+    title: &str,
+) -> Result<GenerateSummary> {
+    let markdown = render_article(title, runs);
     write_text(output_path, &markdown)?;
     Ok(GenerateSummary {
         output_path: output_path.to_path_buf(),
@@ -613,5 +627,42 @@ mod tests {
         assert!(markdown.contains("## Summary"));
         assert!(markdown.contains("cargo run --release -- benchmark"));
         assert!(!markdown.contains("npm run"));
+    }
+
+    #[test]
+    fn generate_article_for_runs_uses_only_explicit_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("article.md");
+        let runs = vec![run(
+            "deepseek-v4-flash",
+            "fix-failing-test",
+            CompletionStatus::Passed,
+            Some(4.0),
+            Some(15000),
+            180000,
+        )];
+
+        let summary = generate_article_for_runs(&runs, &output, "Current").unwrap();
+        let markdown = std::fs::read_to_string(output).unwrap();
+
+        assert_eq!(summary.run_count, 1);
+        assert!(markdown.contains("deepseek-v4-flash"));
+        assert!(!markdown.contains("gpt-oss-20b"));
+    }
+
+    #[test]
+    fn render_conclusion_does_not_pick_a_winner_when_all_runs_fail() {
+        let models = aggregate_by_model(&[run(
+            "nemotron-3-super",
+            "fix-failing-test",
+            CompletionStatus::Failed,
+            None,
+            None,
+            1000,
+        )]);
+
+        let conclusion = render_conclusion(&models);
+        assert!(conclusion.contains("No model produced a passing run"));
+        assert!(!conclusion.contains("strongest aggregate"));
     }
 }
