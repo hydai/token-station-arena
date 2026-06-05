@@ -68,6 +68,8 @@ struct BenchmarkCommand {
     skip_article: bool,
     #[arg(long)]
     dry_run: bool,
+    #[arg(long)]
+    verbose: bool,
 }
 
 /// Parses CLI arguments and dispatches to the matching subcommand.
@@ -83,6 +85,7 @@ pub async fn run() -> Result<()> {
                 skip_judge: command.skip_judge,
                 skip_article: command.skip_article,
                 dry_run: command.dry_run,
+                verbose: command.verbose,
             })
             .await
         }

@@ -90,6 +90,7 @@ Useful options:
 | `--skip-judge` | | Skip LLM judge scoring. |
 | `--skip-article` | | Do not regenerate the article after benchmark completion. |
 | `--dry-run` | | Print the planned run matrix and command strategy only. |
+| `--verbose` | | Print the prepared Claude invocation, full `claude -p` prompt, and failed-check stdout/stderr details. |
 | `--token-dump` | `benchmark/reports/token-station-usage.json` | Token Station dump path to import after execution, if present. |
 
 ## What The Runner Does

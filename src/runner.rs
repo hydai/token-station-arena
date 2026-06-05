@@ -9,7 +9,7 @@ use crate::article::generate_article;
 use crate::command::{format_command, redact_env, run_process, run_shell_command, RunOptions};
 use crate::config::{load_benchmark_config, load_models, project_paths, resolve_project_path};
 use crate::evaluator::{classify_completion, run_checks, CompletionInputs};
-use crate::fs_utils::{copy_dir, ensure_dir, path_exists, write_json, write_text};
+use crate::fs_utils::{copy_dir, ensure_dir, path_exists, read_text, write_json, write_text};
 use crate::judge::{run_judge, skipped_judge, JudgeRunInput};
 use crate::models::select_models;
 use crate::tasks::{load_tasks, select_tasks};
@@ -19,6 +19,8 @@ use crate::types::{
     HumanAudit, LoadedTask, ModelConfig, RunResult,
 };
 use crate::util::now_iso;
+
+const VERBOSE_OUTPUT_LIMIT_CHARS: usize = 24 * 1024;
 
 /// Replaces every run of characters outside `[A-Za-z0-9_-]` with a single dash.
 fn sanitize(value: &str) -> String {
@@ -79,6 +81,7 @@ pub struct BenchmarkArgs {
     pub skip_judge: bool,
     pub skip_article: bool,
     pub dry_run: bool,
+    pub verbose: bool,
 }
 
 /// Runs the full benchmark: every selected task × model × run, then optional
@@ -137,6 +140,7 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
                     &output_dir,
                     timeout,
                     args.skip_judge,
+                    args.verbose,
                 )
                 .await?;
                 println!(
@@ -145,6 +149,9 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
                     result.completion.status.as_str(),
                     result.completion.reason
                 );
+                if args.verbose {
+                    print_verbose_run_failure_details(&output_dir.join(&result.run_id), &result);
+                }
             }
         }
     }
@@ -187,6 +194,7 @@ async fn run_single_benchmark(
     output_dir: &Path,
     timeout: Duration,
     skip_judge: bool,
+    verbose: bool,
 ) -> Result<RunResult> {
     let run_id = build_run_id(&task.config.id, &model.id, run_index);
     let run_dir = output_dir.join(&run_id);
@@ -200,13 +208,26 @@ async fn run_single_benchmark(
     write_json(run_dir.join("model-config.json"), model)?;
 
     if let Some(failed) = prepare_workspace(task, &workspace_dir, timeout, &secrets).await {
+        if verbose {
+            print_verbose_command_result("Workspace setup failed", &failed);
+        }
         let result =
             build_infrastructure_error_result(&run_id, task, model, run_index, benchmark, &failed);
         write_json(run_dir.join("result.json"), &result)?;
         return Ok(result);
     }
 
-    let claude = run_claude(benchmark, task, model, &workspace_dir, timeout, &secrets).await;
+    let claude = run_claude(
+        benchmark,
+        task,
+        model,
+        &workspace_dir,
+        timeout,
+        &secrets,
+        &run_id,
+        verbose,
+    )
+    .await;
     write_text(run_dir.join("stdout.txt"), &claude.stdout)?;
     write_text(run_dir.join("stderr.txt"), &claude.stderr)?;
     write_json(
@@ -338,6 +359,8 @@ async fn run_claude(
     workspace_dir: &Path,
     timeout: Duration,
     secrets: &[String],
+    run_id: &str,
+    verbose: bool,
 ) -> CommandResult {
     let env: Vec<(String, String)> = claude_env(benchmark, model).into_iter().collect();
     let args = vec![
@@ -351,6 +374,9 @@ async fn run_claude(
         "--output-format".to_string(),
         benchmark.claude.output_format.clone(),
     ];
+    if verbose {
+        print_verbose_claude_invocation(run_id, model, &args);
+    }
     run_process(
         "claude",
         &args,
@@ -362,6 +388,193 @@ async fn run_claude(
         },
     )
     .await
+}
+
+fn print_verbose_claude_invocation(run_id: &str, model: &ModelConfig, args: &[String]) {
+    let prompt = args
+        .windows(2)
+        .find(|window| window[0] == "-p")
+        .map(|window| window[1].as_str())
+        .unwrap_or("");
+    let command_args = args_with_prompt_placeholder(args);
+
+    println!("Verbose Claude invocation for {run_id}:");
+    println!("Model: {} -> {}", model.id, model.model);
+    println!("Command: {}", format_command("claude", &command_args));
+    println!("claude -p payload:");
+    println!("-----BEGIN CLAUDE PROMPT-----");
+    print!("{prompt}");
+    if !prompt.ends_with('\n') {
+        println!();
+    }
+    println!("-----END CLAUDE PROMPT-----");
+}
+
+fn args_with_prompt_placeholder(args: &[String]) -> Vec<String> {
+    let mut rendered = Vec::with_capacity(args.len());
+    let mut replace_next = false;
+    for arg in args {
+        if replace_next {
+            rendered.push("<prompt printed below>".to_string());
+            replace_next = false;
+            continue;
+        }
+        rendered.push(arg.clone());
+        replace_next = arg == "-p";
+    }
+    rendered
+}
+
+fn print_verbose_run_failure_details(run_dir: &Path, result: &RunResult) {
+    if result.completion.status == CompletionStatus::Passed {
+        return;
+    }
+
+    let failed_checks: Vec<_> = result.checks.iter().filter(|check| !check.passed).collect();
+    let has_claude_output = path_exists(run_dir.join(&result.artifacts.stdout))
+        || path_exists(run_dir.join(&result.artifacts.stderr));
+    let should_print_claude = (result.claude_exit_code != Some(0)
+        || result.completion.status == CompletionStatus::Timeout)
+        && has_claude_output;
+    let should_print_judge = result.judge.enabled && !result.judge.passed;
+    let should_print_warnings = !result.warnings.is_empty();
+
+    if failed_checks.is_empty()
+        && !should_print_claude
+        && !should_print_judge
+        && !should_print_warnings
+    {
+        return;
+    }
+
+    println!("Verbose failure details for {}:", result.run_id);
+    if !failed_checks.is_empty() {
+        for check in failed_checks {
+            println!(
+                "Failed check: {} (exit: {}, timed out: {}, duration: {}ms)",
+                check.name,
+                format_exit_code(check.exit_code),
+                check.timed_out.unwrap_or(false),
+                check.duration_ms
+            );
+            println!("Command: {}", check.command);
+            print_verbose_artifact(run_dir, "stdout", check.stdout_path.as_deref());
+            print_verbose_artifact(run_dir, "stderr", check.stderr_path.as_deref());
+        }
+    }
+
+    if should_print_claude {
+        println!(
+            "Claude process: exit: {}, duration: {}ms",
+            format_exit_code(result.claude_exit_code),
+            result.duration_ms
+        );
+        print_verbose_artifact(
+            run_dir,
+            "claude stdout",
+            Some(result.artifacts.stdout.as_str()),
+        );
+        print_verbose_artifact(
+            run_dir,
+            "claude stderr",
+            Some(result.artifacts.stderr.as_str()),
+        );
+    }
+
+    if should_print_judge {
+        println!(
+            "Judge failed: model={}, score={}",
+            result.judge.model_id,
+            result
+                .judge
+                .score
+                .map(|score| score.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        );
+        if let Some(error) = &result.judge.error {
+            println!("Judge error: {error}");
+        }
+        for finding in &result.judge.findings {
+            println!(
+                "Judge finding [{}:{}]: {}",
+                finding.severity, finding.category, finding.message
+            );
+        }
+    }
+
+    if should_print_warnings {
+        for warning in &result.warnings {
+            println!("Warning: {warning}");
+        }
+    }
+}
+
+fn print_verbose_artifact(run_dir: &Path, label: &str, relative_path: Option<&str>) {
+    let Some(relative_path) = relative_path else {
+        println!("{label}: <not captured>");
+        return;
+    };
+    let path = run_dir.join(relative_path);
+    match read_text(&path) {
+        Ok(text) if text.is_empty() => {
+            println!("{label} ({relative_path}): <empty>");
+        }
+        Ok(text) => {
+            println!("{label} ({relative_path}):");
+            println!("-----BEGIN {label}-----");
+            print!("{}", truncate_verbose_output(&text));
+            if !text.ends_with('\n') {
+                println!();
+            }
+            println!("-----END {label}-----");
+        }
+        Err(error) => {
+            println!("{label} ({relative_path}): <failed to read: {error}>");
+        }
+    }
+}
+
+fn print_verbose_command_result(label: &str, result: &CommandResult) {
+    println!("{label}:");
+    println!("Command: {}", result.command);
+    println!(
+        "Exit: {}, timed out: {}, duration: {}ms",
+        format_exit_code(result.exit_code),
+        result.timed_out,
+        result.duration_ms
+    );
+    print_verbose_stream("stdout", &result.stdout);
+    print_verbose_stream("stderr", &result.stderr);
+}
+
+fn print_verbose_stream(label: &str, text: &str) {
+    if text.is_empty() {
+        println!("{label}: <empty>");
+        return;
+    }
+    println!("{label}:");
+    println!("-----BEGIN {label}-----");
+    print!("{}", truncate_verbose_output(text));
+    if !text.ends_with('\n') {
+        println!();
+    }
+    println!("-----END {label}-----");
+}
+
+fn format_exit_code(exit_code: Option<i32>) -> String {
+    exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn truncate_verbose_output(text: &str) -> String {
+    let char_count = text.chars().count();
+    if char_count <= VERBOSE_OUTPUT_LIMIT_CHARS {
+        return text.to_string();
+    }
+    let omitted = char_count - VERBOSE_OUTPUT_LIMIT_CHARS;
+    let tail: String = text.chars().skip(omitted).collect();
+    format!("[output truncated; omitted {omitted} chars, showing last {VERBOSE_OUTPUT_LIMIT_CHARS} chars]\n{tail}")
 }
 
 async fn capture_diff(workspace_dir: &Path, secrets: &[String]) -> String {
@@ -590,5 +803,42 @@ mod tests {
 
         let ok = parse_claude_output(r#"{"a":1}"#);
         assert_eq!(ok["a"], 1);
+    }
+
+    #[test]
+    fn args_with_prompt_placeholder_replaces_prompt_value() {
+        let args = vec![
+            "--bare".to_string(),
+            "-p".to_string(),
+            "fix the bug".to_string(),
+            "--model".to_string(),
+            "model-id".to_string(),
+        ];
+
+        assert_eq!(
+            args_with_prompt_placeholder(&args),
+            vec![
+                "--bare",
+                "-p",
+                "<prompt printed below>",
+                "--model",
+                "model-id"
+            ]
+        );
+    }
+
+    #[test]
+    fn truncate_verbose_output_keeps_short_text() {
+        assert_eq!(truncate_verbose_output("short"), "short");
+    }
+
+    #[test]
+    fn truncate_verbose_output_keeps_tail_of_long_text() {
+        let text = "a".repeat(VERBOSE_OUTPUT_LIMIT_CHARS + 3) + "tail";
+        let truncated = truncate_verbose_output(&text);
+
+        assert!(truncated.starts_with("[output truncated; omitted "));
+        assert!(truncated.ends_with("tail"));
+        assert!(!truncated.ends_with(&text));
     }
 }
