@@ -334,12 +334,12 @@ Example fixture settings:
 
 ## 11. Claude Command Execution
 
-Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with `ANTHROPIC_BASE_URL=https://bec.bytefuture.ai/v1`, authenticate with the ByteFuture API key, and pass the selected model ID through Claude Code model selection.
+Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with `ANTHROPIC_BASE_URL=https://bec.bytefuture.ai`, authenticate with the ByteFuture API key, and pass the selected model ID through Claude Code model selection.
 
 The runner should execute a command equivalent to:
 
 ```bash
-ANTHROPIC_BASE_URL=https://bec.bytefuture.ai/v1 \
+ANTHROPIC_BASE_URL=https://bec.bytefuture.ai \
 ANTHROPIC_API_KEY="<bytefuture-api-key>" \
 ANTHROPIC_AUTH_TOKEN="<bytefuture-api-key>" \
 ANTHROPIC_CUSTOM_MODEL_OPTION="<bytefuture-model-id>" \
@@ -353,7 +353,7 @@ claude --bare -p "<task prompt>" \
 
 The preferred strategy is:
 
-1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to `bec.bytefuture.ai/v1`.
+1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to `bec.bytefuture.ai`; Claude Code appends Anthropic API paths like `/v1/messages` itself, so OpenAI-style `/v1` base URLs must be normalized before invocation.
 2. Use `ANTHROPIC_AUTH_TOKEN` for ByteFuture gateway authentication because it requires `Authorization: Bearer <key>`. The runner may derive this from `ANTHROPIC_API_KEY` for compatibility.
 3. Use `--model` and `ANTHROPIC_MODEL` with the exact ByteFuture model ID.
 4. Use `ANTHROPIC_CUSTOM_MODEL_OPTION` so Claude Code does not reject gateway-specific model IDs.

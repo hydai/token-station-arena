@@ -9,6 +9,7 @@ use crate::fs_utils::{write_json, write_text};
 use crate::types::{
     BenchmarkConfig, CheckResult, JudgeFinding, JudgeResult, LoadedTask, ModelConfig,
 };
+use crate::util::anthropic_base_url_for_claude;
 
 /// A disabled (skipped) judge verdict, which counts as a pass.
 pub fn skipped_judge(model_id: &str) -> JudgeResult {
@@ -216,8 +217,9 @@ pub async fn run_judge(input: &JudgeRunInput<'_>) -> JudgeResult {
 
     let base_url = env_nonempty("BYTEFUTURE_BASE_URL")
         .unwrap_or_else(|| input.benchmark.claude.base_url.clone());
+    let anthropic_base_url = anthropic_base_url_for_claude(&base_url);
     let mut env = vec![
-        ("ANTHROPIC_BASE_URL".to_string(), base_url.clone()),
+        ("ANTHROPIC_BASE_URL".to_string(), anthropic_base_url),
         (
             "ANTHROPIC_API_KEY".to_string(),
             anthropic_api_key().unwrap_or_default(),

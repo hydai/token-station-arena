@@ -20,7 +20,7 @@ use crate::types::{
     Artifacts, BenchmarkConfig, ClaudeRunMeta, CommandResult, Completion, CompletionStatus,
     HumanAudit, LoadedTask, ModelConfig, RunResult,
 };
-use crate::util::now_iso;
+use crate::util::{anthropic_base_url_for_claude, now_iso};
 
 const VERBOSE_OUTPUT_LIMIT_CHARS: usize = 24 * 1024;
 
@@ -684,8 +684,9 @@ fn claude_env(benchmark: &BenchmarkConfig, model: &ModelConfig) -> BTreeMap<Stri
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| benchmark.claude.base_url.clone());
+    let anthropic_base_url = anthropic_base_url_for_claude(&base_url);
     let mut env = BTreeMap::new();
-    env.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
+    env.insert("ANTHROPIC_BASE_URL".to_string(), anthropic_base_url);
     env.insert(
         "ANTHROPIC_API_KEY".to_string(),
         anthropic_api_key().unwrap_or_default(),
@@ -892,7 +893,7 @@ fn print_dry_run_plan(
         ""
     };
     println!(
-        "ANTHROPIC_BASE_URL=<BYTEFUTURE_BASE_URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_AUTH_TOKEN=[REDACTED] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
+        "ANTHROPIC_BASE_URL=<normalized BYTEFUTURE_BASE_URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_AUTH_TOKEN=[REDACTED] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
     );
     for task in tasks {
         println!("Task: {} ({})", task.config.id, task.fixture_dir.display());

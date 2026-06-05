@@ -35,6 +35,7 @@ BYTEFUTURE_BASE_URL=https://bec.bytefuture.ai/v1
 ```
 
 `ANTHROPIC_API_KEY` is also accepted for compatibility. For ByteFuture URLs the runner forwards the key to Claude Code as `ANTHROPIC_AUTH_TOKEN` so requests use `Authorization: Bearer <key>`.
+OpenAI-compatible clients use the `/v1` base URL shown above; before invoking Claude Code, the runner trims the final `/v1` because Claude Code appends Anthropic paths such as `/v1/messages` itself.
 
 This project reads environment variables from the shell. Before running real benchmarks, export the file into your shell session:
 
@@ -102,7 +103,7 @@ For every selected task/model/run combination, the runner:
 1. Copies the task fixture into `benchmark/runs/<run-id>/workspace`.
 2. Initializes a git baseline for diff capture.
 3. Runs task setup commands such as `cargo fetch`.
-4. Calls `claude --bare -p <task prompt>` through `bec.bytefuture.ai/v1`.
+4. Calls `claude --bare -p <task prompt>` through `bec.bytefuture.ai`.
 5. Loads the fixture-local `.claude/settings.json`.
 6. Captures stdout, stderr, Claude JSON output, git diff, changed files, and timings.
 7. Runs deterministic checks from `task.yml`.
