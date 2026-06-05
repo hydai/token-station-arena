@@ -114,6 +114,9 @@ async fn run_inner(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Put the child in its own process group (pgid = child pid) so a timeout
+        // can signal the whole group, killing the shell and anything it forks.
+        .process_group(0)
         .kill_on_drop(true);
 
     let mut child = match cmd.spawn() {
@@ -133,6 +136,9 @@ async fn run_inner(
             };
         }
     };
+    // Capture the pid now: after a cancelled `wait()` future, `child.id()` can
+    // return None, which would silently skip the kill signal.
+    let pid = child.id();
 
     // Drain both pipes concurrently so a chatty child never blocks on a full
     // pipe buffer while we wait for it to exit.
@@ -147,7 +153,7 @@ async fn run_inner(
             Ok(result) => result.ok(),
             Err(_) => {
                 timed_out = true;
-                terminate(&mut child).await
+                terminate(&mut child, pid).await
             }
         },
         None => child.wait().await.ok(),
@@ -171,22 +177,20 @@ async fn run_inner(
     }
 }
 
-/// On timeout, ask politely with `SIGTERM`, then force `SIGKILL` if the child
-/// has not exited within the grace period.
-async fn terminate(child: &mut Child) -> Option<ExitStatus> {
-    if let Some(pid) = child.id() {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        );
-    }
-    match tokio::time::timeout(GRACE_AFTER_SIGTERM, child.wait()).await {
-        Ok(result) => result.ok(),
-        Err(_) => {
-            let _ = child.start_kill();
-            child.wait().await.ok()
+/// On timeout, ask the process group politely with `SIGTERM`, then force
+/// `SIGKILL` if it has not exited within the grace period. Signalling the group
+/// (not just the leader pid) reaches children the shell may have forked.
+async fn terminate(child: &mut Child, pid: Option<u32>) -> Option<ExitStatus> {
+    if let Some(pid) = pid {
+        let group = nix::unistd::Pid::from_raw(pid as i32);
+        let _ = nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGTERM);
+        if let Ok(result) = tokio::time::timeout(GRACE_AFTER_SIGTERM, child.wait()).await {
+            return result.ok();
         }
+        let _ = nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGKILL);
     }
+    let _ = child.start_kill();
+    child.wait().await.ok()
 }
 
 /// Reads a stream to EOF, retaining at most [`OUTPUT_LIMIT_BYTES`] but draining
