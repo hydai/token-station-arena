@@ -239,16 +239,6 @@ fn average(values: &[f64]) -> Option<f64> {
     }
 }
 
-fn status_str(status: CompletionStatus) -> &'static str {
-    match status {
-        CompletionStatus::Passed => "passed",
-        CompletionStatus::Partial => "partial",
-        CompletionStatus::Failed => "failed",
-        CompletionStatus::Timeout => "timeout",
-        CompletionStatus::Error => "error",
-    }
-}
-
 fn note_for(model: &ModelAggregate) -> String {
     if model.total == 0 {
         String::new()
@@ -321,7 +311,7 @@ fn render_per_task_tables(runs: &[RunResult]) -> String {
                     "| {} | {} | {} | {} | {} | {} |",
                     run.model_id,
                     run.run_index,
-                    status_str(run.completion.status),
+                    run.completion.status.as_str(),
                     required,
                     format_number(run.judge.score, 1),
                     format_duration(Some(run.duration_ms as f64))
@@ -380,7 +370,7 @@ fn render_stability_table(runs: &[RunResult]) -> String {
             .count();
         let statuses = group
             .iter()
-            .map(|r| status_str(r.completion.status))
+            .map(|r| r.completion.status.as_str())
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!(

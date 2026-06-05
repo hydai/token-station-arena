@@ -44,6 +44,32 @@ pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<()>
     write_text(path, &format!("{json}\n"))
 }
 
+/// Recursively copies the contents of `source` into `destination`.
+pub fn copy_dir(source: impl AsRef<Path>, destination: impl AsRef<Path>) -> Result<()> {
+    let source = source.as_ref();
+    let destination = destination.as_ref();
+    for entry in walkdir::WalkDir::new(source) {
+        let entry = entry.with_context(|| format!("walk {}", source.display()))?;
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .expect("walked path is under source");
+        let target = destination.join(relative);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)
+                .with_context(|| format!("create dir {}", target.display()))?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create dir {}", parent.display()))?;
+            }
+            std::fs::copy(entry.path(), &target)
+                .with_context(|| format!("copy to {}", target.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Recursively finds every file named `file_name` under `dir`.
 pub fn find_files(dir: impl AsRef<Path>, file_name: &str) -> Result<Vec<PathBuf>> {
     let mut matches = Vec::new();
@@ -91,6 +117,20 @@ mod tests {
     fn path_exists_is_false_for_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!path_exists(dir.path().join("nope")));
+    }
+
+    #[test]
+    fn copy_dir_recursively_copies_files_and_subdirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src");
+        write_text(source.join("a.txt"), "A").unwrap();
+        write_text(source.join("sub/b.txt"), "B").unwrap();
+        let destination = dir.path().join("dst");
+
+        copy_dir(&source, &destination).unwrap();
+
+        assert_eq!(read_text(destination.join("a.txt")).unwrap(), "A");
+        assert_eq!(read_text(destination.join("sub/b.txt")).unwrap(), "B");
     }
 
     #[test]

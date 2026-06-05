@@ -173,6 +173,19 @@ pub enum CompletionStatus {
     Error,
 }
 
+impl CompletionStatus {
+    /// The lowercase string form, matching the serialized representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CompletionStatus::Passed => "passed",
+            CompletionStatus::Partial => "partial",
+            CompletionStatus::Failed => "failed",
+            CompletionStatus::Timeout => "timeout",
+            CompletionStatus::Error => "error",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Completion {
     pub status: CompletionStatus,
