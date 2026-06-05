@@ -16,9 +16,13 @@ pub struct ModelAggregate {
     pub avg_judge_score: Option<f64>,
     pub avg_input_tokens: Option<f64>,
     pub avg_output_tokens: Option<f64>,
+    pub avg_cache_tokens: Option<f64>,
     pub avg_tokens: Option<f64>,
     pub avg_cost_usd: Option<f64>,
     pub avg_latency_ms: Option<f64>,
+    pub avg_api_duration_ms: Option<f64>,
+    pub avg_ttft_ms: Option<f64>,
+    pub avg_turns: Option<f64>,
 }
 
 /// Where an article was written and how many runs fed it.
@@ -50,12 +54,37 @@ pub fn aggregate_by_model(runs: &[RunResult]) -> Vec<ModelAggregate> {
             };
             let input_tokens = token_field(|r| r.tokens.as_ref().and_then(|t| t.input));
             let output_tokens = token_field(|r| r.tokens.as_ref().and_then(|t| t.output));
+            let cache_tokens = token_field(|r| {
+                let tokens = r.tokens.as_ref()?;
+                match (tokens.cache_creation_input, tokens.cache_read_input) {
+                    (None, None) => None,
+                    (creation, read) => Some(creation.unwrap_or(0) + read.unwrap_or(0)),
+                }
+            });
             let token_totals = token_field(|r| r.tokens.as_ref().and_then(|t| t.total));
             let costs: Vec<f64> = model_runs
                 .iter()
                 .filter_map(|r| r.tokens.as_ref().and_then(|t| t.estimated_cost_usd))
                 .collect();
-            let latencies: Vec<f64> = model_runs.iter().map(|r| r.duration_ms as f64).collect();
+            let latencies: Vec<f64> = model_runs
+                .iter()
+                .map(|r| claude_duration_ms(r).unwrap_or(r.duration_ms) as f64)
+                .collect();
+            let api_latencies: Vec<f64> = model_runs
+                .iter()
+                .filter_map(|r| r.claude.statistics.as_ref().and_then(|s| s.duration_api_ms))
+                .map(|v| v as f64)
+                .collect();
+            let ttfts: Vec<f64> = model_runs
+                .iter()
+                .filter_map(|r| r.claude.statistics.as_ref().and_then(|s| s.ttft_ms))
+                .map(|v| v as f64)
+                .collect();
+            let turns: Vec<f64> = model_runs
+                .iter()
+                .filter_map(|r| r.claude.statistics.as_ref().and_then(|s| s.num_turns))
+                .map(|v| v as f64)
+                .collect();
 
             ModelAggregate {
                 model_id: model_id.to_string(),
@@ -71,9 +100,13 @@ pub fn aggregate_by_model(runs: &[RunResult]) -> Vec<ModelAggregate> {
                 avg_judge_score: average(&judge_scores),
                 avg_input_tokens: average(&input_tokens),
                 avg_output_tokens: average(&output_tokens),
+                avg_cache_tokens: average(&cache_tokens),
                 avg_tokens: average(&token_totals),
                 avg_cost_usd: average(&costs),
                 avg_latency_ms: average(&latencies),
+                avg_api_duration_ms: average(&api_latencies),
+                avg_ttft_ms: average(&ttfts),
+                avg_turns: average(&turns),
             }
         })
         .collect()
@@ -108,14 +141,14 @@ pub fn render_article(title: &str, runs: &[RunResult]) -> String {
         String::new(),
         "## Introduction".to_string(),
         String::new(),
-        "This guide compares Claude Code-style Rust development tasks across models routed through `models.bytefuture.ai`. Each run records command output, deterministic checks, git diff, latency, judge score, and Token Station usage when a backend dump is available.".to_string(),
+        "This guide compares Claude Code-style Rust development tasks across models routed through `models.bytefuture.ai`. Each run records command output, deterministic checks, git diff, latency, judge score, and Claude Code statistics such as tokens, cost, API time, TTFT, and turn count.".to_string(),
         String::new(),
         "## Methodology".to_string(),
         String::new(),
         "- Every model receives the same task prompt and an isolated copy of the fixture.".to_string(),
         "- The runner initializes git before model execution and captures the resulting diff.".to_string(),
         "- Completion is determined by required deterministic checks and, when enabled, an LLM judge.".to_string(),
-        "- Token usage is imported after execution by matching Token Station dump records to model IDs and execution time windows.".to_string(),
+        "- Token, cost, and duration data is parsed from `claude -p --output-format json` when available.".to_string(),
         String::new(),
         "## Tested Models".to_string(),
         String::new(),
@@ -154,7 +187,6 @@ pub fn render_article(title: &str, runs: &[RunResult]) -> String {
         "```bash".to_string(),
         "cargo run --release -- benchmark --tasks all --models all".to_string(),
         "cargo run --release -- benchmark --tasks fix-failing-test --models openai-gpt-5-5,minimax-m2-7,glm-5".to_string(),
-        "cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs".to_string(),
         "cargo run --release -- generate-article --input benchmark/runs --output benchmark/reports/article.md".to_string(),
         "```".to_string(),
         String::new(),
@@ -162,7 +194,7 @@ pub fn render_article(title: &str, runs: &[RunResult]) -> String {
         String::new(),
         "- This is a practical engineering benchmark, not an academic benchmark.".to_string(),
         "- Results depend on the exact task suite, fixture state, gateway behavior, and Claude Code version.".to_string(),
-        "- Token usage is only populated when a Token Station backend dump can be matched confidently.".to_string(),
+        "- Token usage and model timing depend on the statistics reported by Claude Code's JSON result.".to_string(),
         "- Judge scores should be treated as structured review evidence, not as a replacement for human audit.".to_string(),
         String::new(),
         "## Conclusion".to_string(),
@@ -239,6 +271,13 @@ fn average(values: &[f64]) -> Option<f64> {
     }
 }
 
+fn claude_duration_ms(run: &RunResult) -> Option<u64> {
+    run.claude
+        .statistics
+        .as_ref()
+        .and_then(|statistics| statistics.duration_ms)
+}
+
 fn note_for(model: &ModelAggregate) -> String {
     if model.total == 0 {
         String::new()
@@ -297,8 +336,9 @@ fn render_per_task_tables(runs: &[RunResult]) -> String {
             let mut lines = vec![
                 format!("### {task_id}"),
                 String::new(),
-                "| Model | Run | Status | Required Checks | Judge | Latency |".to_string(),
-                "| --- | ---: | --- | --- | ---: | ---: |".to_string(),
+                "| Model | Run | Status | Required Checks | Judge | Tokens | Cost USD | Latency |"
+                    .to_string(),
+                "| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |".to_string(),
             ];
             for run in runs.iter().filter(|r| r.task_id == **task_id) {
                 let required = run
@@ -308,13 +348,20 @@ fn render_per_task_tables(runs: &[RunResult]) -> String {
                     .collect::<Vec<_>>()
                     .join(", ");
                 lines.push(format!(
-                    "| {} | {} | {} | {} | {} | {} |",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} |",
                     run.model_id,
                     run.run_index,
                     run.completion.status.as_str(),
                     required,
                     format_number(run.judge.score, 1),
-                    format_duration(Some(run.duration_ms as f64))
+                    format_number(
+                        run.tokens.as_ref().and_then(|t| t.total).map(|v| v as f64),
+                        0
+                    ),
+                    format_number(run.tokens.as_ref().and_then(|t| t.estimated_cost_usd), 4),
+                    format_duration(Some(
+                        claude_duration_ms(run).unwrap_or(run.duration_ms) as f64,
+                    ))
                 ));
             }
             lines.join("\n")
@@ -328,18 +375,22 @@ fn render_token_latency_table(models: &[ModelAggregate]) -> String {
         return "No token or latency data is available yet.".to_string();
     }
     let mut lines = vec![
-        "| Model | Avg Input Tokens | Avg Output Tokens | Avg Total Tokens | Avg Cost USD | Avg Latency |".to_string(),
-        "| --- | ---: | ---: | ---: | ---: | ---: |".to_string(),
+        "| Model | Avg Input Tokens | Avg Output Tokens | Avg Cache Tokens | Avg Total Tokens | Avg Cost USD | Avg Wall Time | Avg API Time | Avg TTFT | Avg Turns |".to_string(),
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |".to_string(),
     ];
     for m in models {
         lines.push(format!(
-            "| {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             m.model_id,
             format_number(m.avg_input_tokens, 0),
             format_number(m.avg_output_tokens, 0),
+            format_number(m.avg_cache_tokens, 0),
             format_number(m.avg_tokens, 0),
             format_number(m.avg_cost_usd, 4),
-            format_duration(m.avg_latency_ms)
+            format_duration(m.avg_latency_ms),
+            format_duration(m.avg_api_duration_ms),
+            format_duration(m.avg_ttft_ms),
+            format_number(m.avg_turns, 1)
         ));
     }
     lines.join("\n")
@@ -520,6 +571,7 @@ mod tests {
                 session_id: None,
                 output_format: "json".into(),
                 command_strategy: vec![],
+                statistics: None,
             },
             checks: vec![],
             completion: Completion {

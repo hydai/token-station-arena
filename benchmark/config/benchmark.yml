@@ -9,12 +9,6 @@ benchmark:
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
-  tokenStation:
-    enabled: true
-    mode: backend-dump
-    correlation: execution-time-window
-    dumpPath: benchmark/reports/token-station-usage.json
-    matchWindowPaddingSeconds: 60
   judge:
     enabled: true
     provider: models.bytefuture.ai

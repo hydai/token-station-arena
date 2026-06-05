@@ -112,12 +112,6 @@ benchmark:
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
-  tokenStation:
-    enabled: true
-    mode: backend-dump
-    correlation: execution-time-window
-    dumpPath: benchmark/reports/token-station-usage.json
-    matchWindowPaddingSeconds: 60
   judge:
     enabled: true
     provider: models.bytefuture.ai
@@ -133,13 +127,12 @@ benchmark:
         assert_eq!(cfg.jobs, Some(2));
         assert_eq!(cfg.claude.base_url, "https://bec.bytefuture.ai/v1");
         assert!(cfg.claude.disable_experimental_betas);
-        assert_eq!(cfg.token_station.match_window_padding_seconds, Some(60));
         assert_eq!(cfg.judge.minimum_score, 4.0);
         assert_eq!(cfg.article.output_file, "benchmark/reports/article.md");
     }
 
     #[test]
-    fn match_window_padding_seconds_defaults_to_none_when_absent() {
+    fn jobs_defaults_to_none_when_absent() {
         let yaml = r#"
 benchmark:
   runsPerTaskModel: 1
@@ -151,11 +144,6 @@ benchmark:
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: false
-  tokenStation:
-    enabled: false
-    mode: backend-dump
-    correlation: execution-time-window
-    dumpPath: d.json
   judge:
     enabled: false
     provider: p
@@ -166,7 +154,7 @@ benchmark:
     outputFile: a.md
 "#;
         let cfg = parse_benchmark_config(yaml).unwrap();
-        assert_eq!(cfg.token_station.match_window_padding_seconds, None);
+        assert_eq!(cfg.jobs, None);
     }
 
     #[test]

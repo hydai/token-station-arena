@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This project builds an automated system that runs the same developer tasks across multiple LLMs through `models.bytefuture.ai`, using `claude -p` as the execution interface. The system evaluates whether each task was completed successfully, records execution timestamps and latency, imports token usage from a Token Station backend dump, and generates a publishable technical article that compares model behavior with reproducible evidence.
+This project builds an automated system that runs the same developer tasks across multiple LLMs through `models.bytefuture.ai`, using `claude -p` as the execution interface. The system evaluates whether each task was completed successfully, records Claude Code JSON statistics such as tokens, cost, and duration, and generates a publishable technical article that compares model behavior with reproducible evidence.
 
 The primary output is not a simple announcement that ByteFuture supports a model such as Nemotron. The output is a useful developer guide that shows how different models perform on realistic Claude Code workflows, including `gpt-oss-20b`, `gpt-oss-120b`, DeepSeek models, Kimi, and Nemotron 3 series models.
 
@@ -12,9 +12,7 @@ The primary output is not a simple announcement that ByteFuture supports a model
 - Use `models.bytefuture.ai` as the model provider for every experiment.
 - Measure task completion with deterministic checks and an LLM judge.
 - Detect unrelated or excessive code changes with an LLM judge.
-- Record start time, finish time, and duration for each run so Token Station backend dumps can be matched after execution.
-- Import token usage from Token Station backend dumps.
-- Track latency, command output, generated diffs, and test results.
+- Record tokens, cost, API timing, TTFT, turn count, command output, generated diffs, and test results.
 - Generate a Markdown report that can be edited into a public article.
 - Make the benchmark reproducible from a single command.
 
@@ -57,8 +55,7 @@ The first version should include:
 - Three independent runs per task per model.
 - Deterministic completion checks.
 - LLM judge scoring for correctness, maintainability, and unrelated changes.
-- Token usage imported from a Token Station backend dump.
-- Latency measurement.
+- Token, cost, and latency measurement from `claude -p --output-format json`.
 - Generated git diff capture.
 - Markdown report generation.
 
@@ -102,10 +99,9 @@ The system consists of five main components:
    - Scores correctness, implementation quality, and whether the diff contains unrelated changes.
    - Produces a structured evaluation result.
 
-4. `token-reporter`
-   - Imports usage data from a Token Station backend dump.
-   - Associates usage data with benchmark runs using recorded execution time windows and model IDs.
-   - Records input tokens, output tokens, total tokens, and estimated cost if available.
+4. `statistics-recorder`
+   - Parses usage data from `claude -p --output-format json`.
+   - Records input tokens, output tokens, cache tokens, total tokens, estimated cost, `duration_ms`, API duration, TTFT, and turn count when available.
 
 5. `article-generator`
    - Converts benchmark results into a Markdown guide.
@@ -128,7 +124,6 @@ src/
   command.rs         # tokio subprocess execution: timeout, output cap, redaction
   evaluator.rs       # deterministic checks and completion classification
   judge.rs           # LLM judge invocation and response normalization
-  token_station.rs   # Token Station dump import and correlation
   article.rs         # Markdown article generation
   fs_utils.rs        # filesystem helpers
   runner.rs          # benchmark orchestration loop
@@ -233,11 +228,6 @@ benchmark:
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
-  tokenStation:
-    enabled: true
-    mode: backend-dump
-    correlation: execution-time-window
-    dumpPath: reports/token-station-usage.json
   judge:
     enabled: true
     provider: models.bytefuture.ai
@@ -322,15 +312,13 @@ Example fixture settings:
    - Run setup commands.
    - Execute `claude -p` with the task prompt and model configuration.
    - Load the fixture's `.claude/settings.json` for Claude Code permissions.
-   - Capture stdout, stderr, exit code, duration, and generated files.
+  - Capture stdout, stderr, exit code, Claude JSON statistics, and generated files.
    - Run evaluation checks.
    - Run the LLM judge on the prompt, diff, check results, and repository-specific task definition.
    - Capture git diff.
-   - Record start time, finish time, and duration for later Token Station dump matching.
    - Write a structured run result.
 5. Aggregate run results.
-6. Import Token Station backend dump data when available.
-7. Generate the Markdown article.
+6. Generate the Markdown article.
 
 ## 11. Claude Command Execution
 
@@ -507,27 +495,28 @@ A run should fail judge evaluation when:
 - The judge identifies a severe correctness issue.
 - The model changes files outside `allowedChangePaths` without task justification.
 
-## 14. Token Station Integration
+## 14. Claude JSON Statistics
 
-The runner does not need to query Token Station during benchmark execution. Instead, each run must record precise execution timing so the operator can dump Token Station usage from the backend after the benchmark finishes.
+Every benchmark run uses `claude -p --output-format json`. The runner stores the raw JSON in `claude-output.json` and extracts structured statistics into `result.json`.
 
-Required per-run timing fields:
+Required per-run fields:
 
 - `startedAt`.
 - `finishedAt`.
-- `durationMs`.
+- `durationMs`, preferring Claude JSON `duration_ms` and falling back to subprocess wall-clock duration.
 - `modelId`.
 - `providerModelId`.
 - `runId`.
+- `tokens.input`, `tokens.output`, cache token fields, `tokens.total`, and `tokens.estimatedCostUsd` when available.
+- `claude.statistics.durationMs`.
+- `claude.statistics.durationApiMs`.
+- `claude.statistics.ttftMs`.
+- `claude.statistics.timeToRequestMs`.
+- `claude.statistics.numTurns`.
+- `claude.statistics.terminalReason`.
+- `claude.statistics.stopReason`.
 
-Preferred usage import strategy:
-
-- The benchmark operator exports or dumps Token Station usage from the backend after the run.
-- The reporter imports the dump file.
-- Usage records are matched to benchmark runs by execution time window and model ID.
-- The matched usage is written back into each run's `result.json`.
-
-If a usage record cannot be matched confidently, the reporter should leave token fields null and add a warning to the run result instead of guessing.
+Token totals should prefer the per-model `modelUsage` breakdown. If `modelUsage` is absent, the runner should fall back to top-level `usage`.
 
 ## 15. Article Generator
 
@@ -568,7 +557,6 @@ The MVP should expose commands similar to:
 cargo run --release -- benchmark --tasks all --models all
 cargo run --release -- benchmark --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5,nemotron-3-super
 cargo run --release -- judge --run-id <runId>
-cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs
 cargo run --release -- generate-article --input benchmark/runs --output benchmark/reports/article.md
 ```
 
@@ -580,7 +568,6 @@ Useful options:
 - `--models`
 - `--runs`
 - `--timeout`
-- `--token-dump`
 - `--skip-judge`
 - `--skip-article`
 - `--output`
@@ -639,7 +626,7 @@ Common failure cases:
 - `claude` command not found.
 - ByteFuture API authentication failed.
 - Model unavailable.
-- Token Station backend dump missing, malformed, or not matchable to run time windows.
+- Claude JSON output missing token or timing fields.
 - Task setup failed.
 - Evaluation command failed.
 - Timeout.
@@ -668,8 +655,7 @@ The MVP is complete when:
 - Each run is evaluated by deterministic checks and an LLM judge.
 - Required deterministic checks include `cargo test`, `cargo check`, and `cargo clippy --all-targets -- -D warnings`.
 - The LLM judge reports score, correctness, maintainability, scope control, and unrelated-change findings.
-- Each run records start time, finish time, and duration for Token Station backend dump matching.
-- Token usage can be imported from a Token Station backend dump and merged into run results.
+- Each run records token, cost, and timing statistics from Claude JSON output when available.
 - The system generates a Markdown article from the run results.
 - The article includes completion, judge score, token, latency, and three-run stability comparisons.
 - The workflow can be reproduced from documented commands.
@@ -700,11 +686,11 @@ The MVP is complete when:
 - Detect unrelated changes and low-quality fixes.
 - Persist `judge.json`.
 
-### Phase 4: Token Station Dump Import
+### Phase 4: Claude JSON Statistics
 
-- Implement Token Station backend dump import parser.
-- Match usage records to benchmark runs by execution time window and model ID.
-- Store token data in `result.json`.
+- Implement Claude JSON statistics parsing.
+- Prefer `modelUsage` for token and cost data; fall back to top-level `usage`.
+- Store token, cost, duration, API duration, TTFT, and turn count in `result.json`.
 
 ### Phase 5: Article Generation
 
@@ -734,8 +720,7 @@ The MVP is complete when:
 - Start with deterministic task checks.
 - Record exact prompts, commands, and artifacts.
 - Use `ANTHROPIC_CUSTOM_MODEL_OPTION` and `--model` for gateway-specific model IDs.
-- Match Token Station dump records by both execution time window and model ID.
-- Preserve run metadata so backend Token Station records can be matched even when benchmark runs overlap.
+- Preserve exact Claude JSON output alongside normalized statistics.
 - Label first results as a practical benchmark guide, not a comprehensive leaderboard.
 - Run each task/model pair three times.
 - Keep claims narrow and evidence-backed.
@@ -754,7 +739,7 @@ The MVP is complete when:
 
 ## 25. Finalized Decisions
 
-- Token Station usage will be imported from backend dumps and matched by execution time window plus model ID.
+- Token, cost, and timing data come from `claude -p --output-format json`.
 - The first public fixture set will use Rust: a small workspace with a library crate, an Axum API crate, and unit/integration tests.
 - The benchmark runner will be implemented in Rust as a single binary crate using `tokio`, `clap`, and `serde`.
 - YAML configuration is parsed with `serde_yaml_ng`; subprocess timeouts use `tokio::time::timeout` with a `SIGTERM`-then-`SIGKILL` escalation via `nix`.

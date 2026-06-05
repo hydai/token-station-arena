@@ -51,7 +51,6 @@ fn loads_the_real_benchmark_config() {
     assert_eq!(cfg.timeout_seconds, 1800);
     assert_eq!(cfg.jobs, Some(1));
     assert_eq!(cfg.judge.model, "anthropic/claude-opus-4-6");
-    assert_eq!(cfg.token_station.match_window_padding_seconds, Some(60));
 }
 
 #[test]

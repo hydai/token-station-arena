@@ -1,6 +1,6 @@
 # Token Station Arena
 
-Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through the ByteFuture gateway, importing Token Station usage dumps, and generating an evidence-backed Markdown article.
+Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through the ByteFuture gateway and generating an evidence-backed Markdown article.
 
 The MVP includes:
 
@@ -9,7 +9,7 @@ The MVP includes:
 - Three Rust benchmark tasks with isolated fixtures.
 - Deterministic checks with `cargo test`, `cargo check`, `cargo clippy`, and task-specific scripts.
 - Optional LLM judge scoring.
-- Token Station backend dump import.
+- Token, cost, and timing extraction from `claude -p --output-format json`.
 - Markdown article generation.
 
 ## Requirements
@@ -67,7 +67,7 @@ After `cargo build --release`, you can invoke the binary directly as `target/rel
 Run one task against a small model subset:
 
 ```bash
-cargo run --release -- benchmark --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5 --runs 1
+cargo run --release -- benchmark --tasks fix-failing-test --models openai-gpt-5-5,minimax-m2-7 --runs 1
 ```
 
 Run all configured tasks against all enabled models:
@@ -79,7 +79,7 @@ cargo run --release -- benchmark --tasks all --models all
 Skip the LLM judge when you only want deterministic checks:
 
 ```bash
-cargo run --release -- benchmark --tasks add-api-endpoint --models nemotron-3-super --runs 1 --skip-judge
+cargo run --release -- benchmark --tasks add-api-endpoint --models glm-5 --runs 1 --skip-judge
 ```
 
 Useful options:
@@ -94,7 +94,27 @@ Useful options:
 | `--skip-article` | | Do not regenerate the article after benchmark completion. |
 | `--dry-run` | | Print the planned run matrix and command strategy only. |
 | `--verbose` | | Print the prepared Claude invocation, full `claude -p` prompt, and failed-check stdout/stderr details. |
-| `--token-dump` | `benchmark/reports/token-station-usage.json` | Token Station dump path to import after execution, if present. |
+
+## Claude Invocation
+
+Each benchmark run invokes Claude Code with:
+
+```text
+claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json
+```
+
+The runner also sets these environment variables for the subprocess:
+
+| Variable | Meaning |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | Normalized ByteFuture base URL for Claude Code. |
+| `ANTHROPIC_API_KEY` | API key forwarded from `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `BYTEFUTURE_AUTH_TOKEN`. |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token used for ByteFuture gateway requests. |
+| `ANTHROPIC_CUSTOM_MODEL_OPTION` | Provider model ID from `benchmark/config/models.yml`. |
+| `ANTHROPIC_MODEL` | Same provider model ID, matching Claude Code model selection. |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | Set when `benchmark.claude.disableExperimentalBetas` is true. |
+
+`--output-format json` is required. The runner parses `usage`, `modelUsage`, `total_cost_usd`, `duration_ms`, `duration_api_ms`, `ttft_ms`, `time_to_request_ms`, `num_turns`, `terminal_reason`, and `stop_reason` from `claude-output.json`.
 
 ## What The Runner Does
 
@@ -103,13 +123,14 @@ For every selected task/model/run combination, the runner:
 1. Copies the task fixture into `benchmark/runs/<run-id>/workspace`.
 2. Initializes a git baseline for diff capture.
 3. Runs task setup commands such as `cargo fetch`.
-4. Calls `claude --bare -p <task prompt>` through `bec.bytefuture.ai`.
+4. Calls `claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json` through `bec.bytefuture.ai`.
 5. Loads the fixture-local `.claude/settings.json`.
-6. Captures stdout, stderr, Claude JSON output, git diff, changed files, and timings.
-7. Runs deterministic checks from `task.yml`.
-8. Runs the LLM judge unless disabled.
-9. Writes `result.json`.
-10. Regenerates the Markdown article unless disabled.
+6. Captures stdout, stderr, Claude JSON output, git diff, and changed files.
+7. Extracts Claude Code JSON statistics, including token counts, cost, `duration_ms`, API time, TTFT, and turn count.
+8. Runs deterministic checks from `task.yml`.
+9. Runs the LLM judge unless disabled.
+10. Writes `result.json`.
+11. Regenerates the Markdown article unless disabled.
 
 Secrets such as `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `BYTEFUTURE_AUTH_TOKEN` are redacted from command output artifacts.
 
@@ -134,15 +155,14 @@ Each fixture is its own Cargo workspace; the orchestrator excludes `benchmark/ta
 
 Models are configured in `benchmark/config/models.yml`.
 
-Enabled canonical model IDs:
+Enabled model IDs:
 
-- `gpt-oss-20b`
+- `openai-gpt-5-5`
+- `minimax-m2-7`
+- `glm-5`
+- `qwen3-32b`
 - `gpt-oss-120b`
-- `deepseek-v4-flash`
-- `deepseek-v4-pro`
-- `kimi-k2-5`
-- `nemotron-3-super`
-- `nemotron-3-nano`
+- `nemotron-3-ultra`
 
 You can disable a model by setting `enabled: false`.
 
@@ -180,40 +200,13 @@ Re-run judge scoring for an existing run:
 cargo run --release -- judge --run-id <run-id>
 ```
 
-## Import Token Station Usage
+## Claude JSON Statistics
 
-After benchmark execution, export or dump Token Station usage from the backend to JSON, then import it:
+`result.json` stores token and cost data in `tokens` and runtime metadata in `claude.statistics`.
 
-```bash
-cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs
-```
+Token totals prefer the `modelUsage` breakdown from `claude-output.json`; if it is absent, the runner falls back to top-level `usage`. `tokens.total` is calculated as input + output + cache creation input + cache read input. `tokens.estimatedCostUsd` is read from the per-model `costUSD` breakdown or top-level `total_cost_usd`.
 
-The importer matches usage records to benchmark runs by:
-
-- execution time window,
-- benchmark model ID or provider model ID,
-- configured padding from `benchmark/config/benchmark.yml`.
-
-If no confident match is found, the run keeps token fields empty and receives a warning instead of guessing.
-
-The importer accepts common dump shapes such as:
-
-```json
-{
-  "records": [
-    {
-      "model": "deepseek/deepseek-v4-flash",
-      "createdAt": "2026-06-04T10:00:00Z",
-      "usage": {
-        "input_tokens": 12000,
-        "output_tokens": 3200,
-        "total_tokens": 15200,
-        "cost_usd": 0.08
-      }
-    }
-  ]
-}
-```
+Timing prefers Claude Code's JSON `duration_ms`. The subprocess wall-clock duration is kept only as a fallback when JSON timing is unavailable. The article also reports `duration_api_ms`, `ttft_ms`, and `num_turns` when present.
 
 ## Generate The Article
 
@@ -227,7 +220,7 @@ The article includes methodology, tested models, task list, a summary table, per
 
 ## Configuration Files
 
-- `benchmark/config/benchmark.yml`: run counts, timeouts, output directories, Claude settings, judge model, Token Station settings, and article output path.
+- `benchmark/config/benchmark.yml`: run counts, timeouts, output directories, Claude settings, judge model, and article output path.
 - `benchmark/config/models.yml`: model list and provider model IDs.
 - `.env.example`: required environment variables.
 

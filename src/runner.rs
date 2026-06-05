@@ -15,10 +15,9 @@ use crate::fs_utils::{
 use crate::judge::{run_judge, skipped_judge, JudgeRunInput};
 use crate::models::select_models;
 use crate::tasks::{load_tasks, select_tasks};
-use crate::token_station::import_token_dump;
 use crate::types::{
-    Artifacts, BenchmarkConfig, ClaudeRunMeta, CommandResult, Completion, CompletionStatus,
-    HumanAudit, LoadedTask, ModelConfig, RunResult,
+    Artifacts, BenchmarkConfig, ClaudeRunMeta, ClaudeRunStatistics, CommandResult, Completion,
+    CompletionStatus, HumanAudit, LoadedTask, ModelConfig, RunResult, TokenUsage,
 };
 use crate::util::{anthropic_base_url_for_claude, now_iso};
 
@@ -93,6 +92,281 @@ fn claude_api_error(output: &Value) -> Option<String> {
     Some(format!("{prefix}: {detail}"))
 }
 
+fn extract_claude_statistics(output: &Value) -> Option<ClaudeRunStatistics> {
+    if output.get("parseError").is_some() {
+        return None;
+    }
+
+    let statistics = ClaudeRunStatistics {
+        duration_ms: first_u64(output, &["duration_ms", "durationMs"]),
+        duration_api_ms: first_u64(output, &["duration_api_ms", "durationApiMs"]),
+        ttft_ms: first_u64(output, &["ttft_ms", "ttftMs"]),
+        time_to_request_ms: first_u64(output, &["time_to_request_ms", "timeToRequestMs"]),
+        num_turns: first_u64(output, &["num_turns", "numTurns"]),
+        total_cost_usd: first_f64(output, &["total_cost_usd", "totalCostUsd"]),
+        terminal_reason: first_string(output, &["terminal_reason", "terminalReason"]),
+        stop_reason: first_string(output, &["stop_reason", "stopReason"]),
+    };
+
+    if statistics.duration_ms.is_none()
+        && statistics.duration_api_ms.is_none()
+        && statistics.ttft_ms.is_none()
+        && statistics.time_to_request_ms.is_none()
+        && statistics.num_turns.is_none()
+        && statistics.total_cost_usd.is_none()
+        && statistics.terminal_reason.is_none()
+        && statistics.stop_reason.is_none()
+    {
+        None
+    } else {
+        Some(statistics)
+    }
+}
+
+fn extract_claude_token_usage(output: &Value) -> Option<TokenUsage> {
+    if output.get("parseError").is_some() {
+        return None;
+    }
+
+    if let Some(model_usage) = output.get("modelUsage").and_then(Value::as_object) {
+        let mut totals = UsageAccumulator::default();
+        for usage in model_usage.values().filter_map(Value::as_object) {
+            totals.add_input(first_i64_from_object(
+                usage,
+                &["inputTokens", "input_tokens", "input"],
+            ));
+            totals.add_output(first_i64_from_object(
+                usage,
+                &["outputTokens", "output_tokens", "output"],
+            ));
+            totals.add_cache_creation(first_i64_from_object(
+                usage,
+                &[
+                    "cacheCreationInputTokens",
+                    "cache_creation_input_tokens",
+                    "cacheCreationInput",
+                ],
+            ));
+            totals.add_cache_read(first_i64_from_object(
+                usage,
+                &[
+                    "cacheReadInputTokens",
+                    "cache_read_input_tokens",
+                    "cacheReadInput",
+                ],
+            ));
+            totals.add_cost(first_f64_from_object(
+                usage,
+                &["costUSD", "costUsd", "cost_usd"],
+            ));
+        }
+        if totals.has_usage() {
+            return Some(totals.into_token_usage(
+                "claude-output-json",
+                "direct-claude-output",
+                "claude-output.json",
+            ));
+        }
+    }
+
+    let usage = output.get("usage").and_then(Value::as_object)?;
+    let cache_creation_nested = usage.get("cache_creation").and_then(Value::as_object);
+    let mut totals = UsageAccumulator::default();
+    totals.add_input(first_i64_from_object(
+        usage,
+        &["input_tokens", "inputTokens", "input"],
+    ));
+    totals.add_output(first_i64_from_object(
+        usage,
+        &["output_tokens", "outputTokens", "output"],
+    ));
+    totals.add_cache_creation(
+        first_i64_from_object(
+            usage,
+            &[
+                "cache_creation_input_tokens",
+                "cacheCreationInputTokens",
+                "cacheCreationInput",
+            ],
+        )
+        .or_else(|| {
+            cache_creation_nested.and_then(|nested| {
+                first_i64_from_object(
+                    nested,
+                    &[
+                        "ephemeral_1h_input_tokens",
+                        "ephemeral_5m_input_tokens",
+                        "ephemeral1hInputTokens",
+                        "ephemeral5mInputTokens",
+                    ],
+                )
+            })
+        }),
+    );
+    totals.add_cache_read(first_i64_from_object(
+        usage,
+        &[
+            "cache_read_input_tokens",
+            "cacheReadInputTokens",
+            "cacheReadInput",
+        ],
+    ));
+    totals.add_cost(first_f64(output, &["total_cost_usd", "totalCostUsd"]));
+
+    if totals.has_usage() {
+        Some(totals.into_token_usage(
+            "claude-output-json",
+            "direct-claude-output",
+            "claude-output.json",
+        ))
+    } else {
+        None
+    }
+}
+
+#[derive(Default)]
+struct UsageAccumulator {
+    input: i64,
+    output: i64,
+    cache_creation_input: i64,
+    cache_read_input: i64,
+    estimated_cost_usd: f64,
+    has_input: bool,
+    has_output: bool,
+    has_cache_creation: bool,
+    has_cache_read: bool,
+    has_cost: bool,
+}
+
+impl UsageAccumulator {
+    fn add_input(&mut self, value: Option<i64>) {
+        if let Some(value) = value {
+            self.input += value;
+            self.has_input = true;
+        }
+    }
+
+    fn add_output(&mut self, value: Option<i64>) {
+        if let Some(value) = value {
+            self.output += value;
+            self.has_output = true;
+        }
+    }
+
+    fn add_cache_creation(&mut self, value: Option<i64>) {
+        if let Some(value) = value {
+            self.cache_creation_input += value;
+            self.has_cache_creation = true;
+        }
+    }
+
+    fn add_cache_read(&mut self, value: Option<i64>) {
+        if let Some(value) = value {
+            self.cache_read_input += value;
+            self.has_cache_read = true;
+        }
+    }
+
+    fn add_cost(&mut self, value: Option<f64>) {
+        if let Some(value) = value {
+            self.estimated_cost_usd += value;
+            self.has_cost = true;
+        }
+    }
+
+    fn has_usage(&self) -> bool {
+        self.has_input
+            || self.has_output
+            || self.has_cache_creation
+            || self.has_cache_read
+            || self.has_cost
+    }
+
+    fn into_token_usage(self, source: &str, correlation: &str, dump_file: &str) -> TokenUsage {
+        let total = if self.has_input
+            || self.has_output
+            || self.has_cache_creation
+            || self.has_cache_read
+        {
+            Some(self.input + self.output + self.cache_creation_input + self.cache_read_input)
+        } else {
+            None
+        };
+        TokenUsage {
+            source: source.to_string(),
+            correlation: correlation.to_string(),
+            dump_file: dump_file.to_string(),
+            input: self.has_input.then_some(self.input),
+            output: self.has_output.then_some(self.output),
+            cache_creation_input: self.has_cache_creation.then_some(self.cache_creation_input),
+            cache_read_input: self.has_cache_read.then_some(self.cache_read_input),
+            total,
+            estimated_cost_usd: self.has_cost.then_some(self.estimated_cost_usd),
+        }
+    }
+}
+
+fn first_u64(output: &Value, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(value) = output.get(*key).and_then(value_to_u64) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn first_i64_from_object(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(value) = object.get(*key).and_then(value_to_i64) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn first_f64(output: &Value, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        if let Some(value) = output.get(*key).and_then(value_to_f64) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn first_f64_from_object(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        if let Some(value) = object.get(*key).and_then(value_to_f64) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn first_string(output: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = output.get(*key).and_then(Value::as_str) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn value_to_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
+}
+
+fn value_to_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+}
+
+fn value_to_f64(value: &Value) -> Option<f64> {
+    value.as_f64().filter(|value| value.is_finite())
+}
+
 /// Options controlling a benchmark run, mirroring the CLI flags.
 #[derive(Debug, Clone, Default)]
 pub struct BenchmarkArgs {
@@ -101,7 +375,6 @@ pub struct BenchmarkArgs {
     pub runs: Option<u32>,
     pub timeout: Option<u64>,
     pub jobs: Option<usize>,
-    pub token_dump: Option<String>,
     pub skip_judge: bool,
     pub skip_article: bool,
     pub dry_run: bool,
@@ -166,23 +439,6 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
         jobs,
     })
     .await?;
-
-    let token_dump = args
-        .token_dump
-        .clone()
-        .unwrap_or_else(|| benchmark.token_station.dump_path.clone());
-    let token_dump_path = resolve_project_path(&paths.root_dir, &token_dump);
-    if benchmark.token_station.enabled && path_exists(&token_dump_path) {
-        let padding = benchmark
-            .token_station
-            .match_window_padding_seconds
-            .unwrap_or(60);
-        let summary = import_token_dump(&token_dump_path, &output_dir, padding)?;
-        println!(
-            "Token import updated {}/{} run(s).",
-            summary.updated, summary.run_files
-        );
-    }
 
     if !args.skip_article {
         let article_path = resolve_project_path(&paths.root_dir, &benchmark.article.output_file);
@@ -405,6 +661,12 @@ async fn run_single_benchmark(input: SingleBenchmarkInput<'_>) -> Result<RunResu
     write_text(run_dir.join("stdout.txt"), &claude.stdout)?;
     write_text(run_dir.join("stderr.txt"), &claude.stderr)?;
     let claude_output = parse_claude_output(&claude.stdout);
+    let claude_tokens = extract_claude_token_usage(&claude_output);
+    let claude_statistics = extract_claude_statistics(&claude_output);
+    let result_duration_ms = claude_statistics
+        .as_ref()
+        .and_then(|statistics| statistics.duration_ms)
+        .unwrap_or(claude.duration_ms);
     write_json(run_dir.join("claude-output.json"), &claude_output)?;
     write_json(
         run_dir.join("command-strategy.json"),
@@ -426,6 +688,9 @@ async fn run_single_benchmark(input: SingleBenchmarkInput<'_>) -> Result<RunResu
             run_index,
             benchmark,
             claude: &claude,
+            duration_ms: result_duration_ms,
+            tokens: claude_tokens,
+            statistics: claude_statistics,
             changed_files,
             reason: error,
         });
@@ -474,16 +739,17 @@ async fn run_single_benchmark(input: SingleBenchmarkInput<'_>) -> Result<RunResu
         provider: model.provider.clone(),
         started_at: claude.started_at.clone(),
         finished_at: claude.finished_at.clone(),
-        duration_ms: claude.duration_ms,
+        duration_ms: result_duration_ms,
         claude_exit_code: claude.exit_code,
         claude: ClaudeRunMeta {
             session_id: extract_claude_session_id(&claude.stdout),
             output_format: benchmark.claude.output_format.clone(),
             command_strategy: command_strategy_labels(),
+            statistics: claude_statistics,
         },
         checks,
         completion,
-        tokens: None,
+        tokens: claude_tokens,
         judge,
         artifacts: default_artifacts(),
         changed_files,
@@ -956,6 +1222,7 @@ fn build_infrastructure_error_result(
             session_id: None,
             output_format: benchmark.claude.output_format.clone(),
             command_strategy: vec![],
+            statistics: None,
         },
         checks: vec![],
         completion: Completion {
@@ -982,6 +1249,9 @@ struct ClaudeErrorResultInput<'a> {
     run_index: u32,
     benchmark: &'a BenchmarkConfig,
     claude: &'a CommandResult,
+    duration_ms: u64,
+    tokens: Option<TokenUsage>,
+    statistics: Option<ClaudeRunStatistics>,
     changed_files: Vec<String>,
     reason: String,
 }
@@ -996,19 +1266,20 @@ fn build_claude_error_result(input: ClaudeErrorResultInput<'_>) -> RunResult {
         provider: input.model.provider.clone(),
         started_at: input.claude.started_at.clone(),
         finished_at: input.claude.finished_at.clone(),
-        duration_ms: input.claude.duration_ms,
+        duration_ms: input.duration_ms,
         claude_exit_code: input.claude.exit_code,
         claude: ClaudeRunMeta {
             session_id: extract_claude_session_id(&input.claude.stdout),
             output_format: input.benchmark.claude.output_format.clone(),
             command_strategy: command_strategy_labels(),
+            statistics: input.statistics,
         },
         checks: vec![],
         completion: Completion {
             status: CompletionStatus::Error,
             reason: input.reason.clone(),
         },
-        tokens: None,
+        tokens: input.tokens,
         judge: skipped_judge(&input.benchmark.judge.model),
         artifacts: default_artifacts(),
         changed_files: input.changed_files,
@@ -1052,6 +1323,7 @@ fn print_dry_run_plan(
 mod tests {
     use super::*;
     use crate::types::{SuccessConfig, TaskConfig};
+    use serde_json::json;
 
     #[test]
     fn sanitize_replaces_disallowed_runs_with_a_single_dash() {
@@ -1150,6 +1422,84 @@ mod tests {
 
         let ok = parse_claude_output(r#"{"type":"result","is_error":false}"#);
         assert!(claude_api_error(&ok).is_none());
+    }
+
+    #[test]
+    fn extracts_claude_statistics_from_json_result() {
+        let output = json!({
+            "duration_ms": 1200,
+            "duration_api_ms": 900,
+            "ttft_ms": 250,
+            "time_to_request_ms": 12,
+            "num_turns": 3,
+            "total_cost_usd": 0.42,
+            "terminal_reason": "completed",
+            "stop_reason": "end_turn"
+        });
+
+        let statistics = extract_claude_statistics(&output).expect("statistics parsed");
+
+        assert_eq!(statistics.duration_ms, Some(1200));
+        assert_eq!(statistics.duration_api_ms, Some(900));
+        assert_eq!(statistics.ttft_ms, Some(250));
+        assert_eq!(statistics.num_turns, Some(3));
+        assert_eq!(statistics.total_cost_usd, Some(0.42));
+        assert_eq!(statistics.terminal_reason.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn extracts_token_usage_from_model_usage_breakdown() {
+        let output = json!({
+            "total_cost_usd": 0.07,
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2
+            },
+            "modelUsage": {
+                "provider/model-a": {
+                    "inputTokens": 100,
+                    "outputTokens": 20,
+                    "cacheCreationInputTokens": 3,
+                    "cacheReadInputTokens": 4,
+                    "costUSD": 0.05
+                },
+                "provider/model-b": {
+                    "inputTokens": 10,
+                    "outputTokens": 2,
+                    "costUSD": 0.02
+                }
+            }
+        });
+
+        let tokens = extract_claude_token_usage(&output).expect("tokens parsed");
+
+        assert_eq!(tokens.source, "claude-output-json");
+        assert_eq!(tokens.input, Some(110));
+        assert_eq!(tokens.output, Some(22));
+        assert_eq!(tokens.cache_creation_input, Some(3));
+        assert_eq!(tokens.cache_read_input, Some(4));
+        assert_eq!(tokens.total, Some(139));
+        assert_eq!(tokens.estimated_cost_usd, Some(0.07));
+    }
+
+    #[test]
+    fn extracts_token_usage_from_top_level_usage_when_breakdown_missing() {
+        let output = json!({
+            "total_cost_usd": 0.03,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 5,
+                "cache_read_input_tokens": 7
+            }
+        });
+
+        let tokens = extract_claude_token_usage(&output).expect("tokens parsed");
+
+        assert_eq!(tokens.input, Some(100));
+        assert_eq!(tokens.output, Some(20));
+        assert_eq!(tokens.total, Some(132));
+        assert_eq!(tokens.estimated_cost_usd, Some(0.03));
     }
 
     #[test]

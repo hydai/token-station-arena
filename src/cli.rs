@@ -10,7 +10,6 @@ use crate::fs_utils::{read_json, read_text, write_json};
 use crate::judge::{run_judge, JudgeRunInput};
 use crate::runner::{run_benchmark, BenchmarkArgs};
 use crate::tasks::load_tasks;
-use crate::token_station::import_token_dump;
 use crate::types::RunResult;
 
 #[derive(Parser)]
@@ -34,13 +33,6 @@ enum Command {
         #[arg(long)]
         run_id: String,
     },
-    /// Import a Token Station dump into existing run results.
-    ImportTokenDump {
-        #[arg(long)]
-        input: Option<String>,
-        #[arg(long)]
-        runs: Option<String>,
-    },
     /// Generate the Markdown article from run results.
     GenerateArticle {
         #[arg(long)]
@@ -63,8 +55,6 @@ struct BenchmarkCommand {
     #[arg(long)]
     jobs: Option<usize>,
     #[arg(long)]
-    token_dump: Option<String>,
-    #[arg(long)]
     skip_judge: bool,
     #[arg(long)]
     skip_article: bool,
@@ -84,7 +74,6 @@ pub async fn run() -> Result<()> {
                 runs: command.runs,
                 timeout: command.timeout,
                 jobs: command.jobs,
-                token_dump: command.token_dump,
                 skip_judge: command.skip_judge,
                 skip_article: command.skip_article,
                 dry_run: command.dry_run,
@@ -94,7 +83,6 @@ pub async fn run() -> Result<()> {
         }
         Command::Judge { run_id } => judge_command(&run_id).await,
         Command::Evaluate { run_id } => evaluate_command(&run_id).await,
-        Command::ImportTokenDump { input, runs } => import_command(input, runs),
         Command::GenerateArticle { input, output } => generate_command(input, output),
     }
 }
@@ -189,32 +177,6 @@ async fn evaluate_command(run_id: &str) -> Result<()> {
     write_json(&result_path, &result)?;
 
     println!("Re-ran {} check(s) for {run_id}.", result.checks.len());
-    Ok(())
-}
-
-fn import_command(input: Option<String>, runs: Option<String>) -> Result<()> {
-    let paths = project_paths(std::env::current_dir().context("determine current directory")?);
-    let benchmark = load_benchmark_config(&paths)?;
-    let input_path = resolve_project_path(
-        &paths.root_dir,
-        input
-            .as_deref()
-            .unwrap_or(&benchmark.token_station.dump_path),
-    );
-    let runs_dir = resolve_project_path(
-        &paths.root_dir,
-        runs.as_deref().unwrap_or(&benchmark.output_dir),
-    );
-    let padding = benchmark
-        .token_station
-        .match_window_padding_seconds
-        .unwrap_or(60);
-
-    let summary = import_token_dump(&input_path, &runs_dir, padding)?;
-    println!(
-        "Token import updated {}/{} run(s); unmatched: {}.",
-        summary.updated, summary.run_files, summary.unmatched
-    );
     Ok(())
 }
 

@@ -29,7 +29,6 @@ pub struct BenchmarkConfig {
     pub output_dir: String,
     pub report_dir: String,
     pub claude: ClaudeConfig,
-    pub token_station: TokenStationConfig,
     pub judge: JudgeConfig,
     pub article: ArticleConfig,
 }
@@ -41,17 +40,6 @@ pub struct ClaudeConfig {
     pub output_format: String,
     pub project_settings_file: String,
     pub disable_experimental_betas: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenStationConfig {
-    pub enabled: bool,
-    pub mode: String,
-    pub correlation: String,
-    pub dump_path: String,
-    #[serde(default)]
-    pub match_window_padding_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,7 +209,7 @@ pub struct JudgeResult {
     pub error: Option<String>,
 }
 
-/// Token usage for a run, imported from a Token Station backend dump.
+/// Token usage for a run, parsed from Claude Code JSON output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsage {
@@ -243,6 +231,30 @@ pub struct ClaudeRunMeta {
     pub session_id: Option<String>,
     pub output_format: String,
     pub command_strategy: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statistics: Option<ClaudeRunStatistics>,
+}
+
+/// Runtime statistics reported by `claude -p --output-format json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeRunStatistics {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_api_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_request_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_turns: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 /// Relative paths to the artifacts saved for a run.
