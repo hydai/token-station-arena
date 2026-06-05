@@ -116,6 +116,25 @@ pub struct TaskConfig {
     pub expected_files: Option<Vec<String>>,
 }
 
+/// The result of running a subprocess: captured output, timing, exit status,
+/// and whether it was killed by the timeout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandResult {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_ms: u64,
+    pub timed_out: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// A task loaded from disk together with its resolved paths and prompt text.
 #[derive(Debug, Clone)]
 pub struct LoadedTask {
