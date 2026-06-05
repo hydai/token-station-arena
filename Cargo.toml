@@ -26,3 +26,6 @@ walkdir = "2.5.0"
 # Per global Rust preference: keep dependency debug info out of dev builds.
 [profile.dev.package."*"]
 debug = false
+
+[dev-dependencies]
+tempfile = "3.27.0"

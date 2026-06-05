@@ -144,3 +144,79 @@ pub struct LoadedTask {
     pub prompt_path: PathBuf,
     pub prompt: String,
 }
+
+/// The outcome of one deterministic check command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckResult {
+    pub name: String,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub passed: bool,
+    pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_out: Option<bool>,
+}
+
+/// Overall completion classification for a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CompletionStatus {
+    Passed,
+    Partial,
+    Failed,
+    Timeout,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Completion {
+    pub status: CompletionStatus,
+    pub reason: String,
+}
+
+/// A single observation from the LLM judge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeFinding {
+    pub severity: String,
+    pub category: String,
+    pub message: String,
+}
+
+/// The structured verdict from the LLM judge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeResult {
+    pub enabled: bool,
+    pub model_id: String,
+    pub score: Option<f64>,
+    pub passed: bool,
+    pub correctness: Option<f64>,
+    pub maintainability: Option<f64>,
+    pub scope_control: Option<f64>,
+    pub has_unrelated_changes: bool,
+    pub findings: Vec<JudgeFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_output_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Token usage for a run, imported from a Token Station backend dump.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsage {
+    pub source: String,
+    pub correlation: String,
+    pub dump_file: String,
+    pub input: Option<i64>,
+    pub output: Option<i64>,
+    pub cache_creation_input: Option<i64>,
+    pub cache_read_input: Option<i64>,
+    pub total: Option<i64>,
+    pub estimated_cost_usd: Option<f64>,
+}
