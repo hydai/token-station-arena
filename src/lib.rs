@@ -2,6 +2,7 @@
 //! article generator. Library root; modules are added as the implementation
 //! grows under test.
 
+pub mod article;
 pub mod command;
 pub mod config;
 pub mod evaluator;
