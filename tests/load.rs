@@ -5,7 +5,7 @@ use token_station_arena::config::{load_benchmark_config, load_models, project_pa
 use token_station_arena::tasks::load_tasks;
 
 #[test]
-fn loads_the_seven_enabled_models() {
+fn loads_the_enabled_model_set() {
     let paths = project_paths(".");
     let models = load_models(&paths).expect("load models.yml");
     let enabled: Vec<&str> = models
@@ -18,10 +18,28 @@ fn loads_the_seven_enabled_models() {
         7,
         "expected 7 enabled models, got {enabled:?}"
     );
-    assert!(models.iter().any(|m| m.model == "groq/gpt-oss-20b"));
+    assert!(models.iter().any(|m| m.model == "openai/gpt-5.5"));
+    assert!(models.iter().any(|m| m.model == "minimax/MiniMax-M2.7"));
+    assert!(models.iter().any(|m| m.model == "glm/glm-5"));
+    assert!(models.iter().any(|m| m.model == "groq/qwen3-32b"));
+    assert!(models.iter().any(|m| m.model == "groq/gpt-oss-120b"));
     assert!(models
         .iter()
-        .any(|m| m.model == "deepinfra/nemotron-3-nano"));
+        .any(|m| m.model == "nvidia-nim/nemotron-3-ultra-550b-a55b"));
+    assert!(models.iter().any(|m| m.model == "groq/kimi-k2"));
+
+    assert!(models
+        .iter()
+        .any(|m| m.model == "kimi/kimi-k2.5" && !m.enabled));
+    assert!(models
+        .iter()
+        .any(|m| m.model == "deepseek/deepseek-v4-pro" && !m.enabled));
+    assert!(!models
+        .iter()
+        .any(|m| m.enabled && m.model.starts_with("deepseek/")));
+    assert!(!models
+        .iter()
+        .any(|m| m.enabled && m.model.starts_with("deepinfra/")));
 }
 
 #[test]

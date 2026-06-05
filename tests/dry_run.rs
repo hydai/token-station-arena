@@ -8,7 +8,7 @@ use token_station_arena::runner::{run_benchmark, BenchmarkArgs};
 async fn dry_run_loads_real_config_and_plans_without_calling_claude() {
     let args = BenchmarkArgs {
         tasks: Some("all".to_string()),
-        models: Some("deepseek-v4-flash,kimi-k2-5".to_string()),
+        models: Some("openai-gpt-5-5,minimax-m2-7".to_string()),
         runs: Some(1),
         dry_run: true,
         ..BenchmarkArgs::default()

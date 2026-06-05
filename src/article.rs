@@ -153,7 +153,7 @@ pub fn render_article(title: &str, runs: &[RunResult]) -> String {
         String::new(),
         "```bash".to_string(),
         "cargo run --release -- benchmark --tasks all --models all".to_string(),
-        "cargo run --release -- benchmark --tasks fix-failing-test --models deepseek-v4-flash,kimi-k2-5,nemotron-3-super".to_string(),
+        "cargo run --release -- benchmark --tasks fix-failing-test --models openai-gpt-5-5,minimax-m2-7,glm-5".to_string(),
         "cargo run --release -- import-token-dump --input benchmark/reports/token-station-usage.json --runs benchmark/runs".to_string(),
         "cargo run --release -- generate-article --input benchmark/runs --output benchmark/reports/article.md".to_string(),
         "```".to_string(),

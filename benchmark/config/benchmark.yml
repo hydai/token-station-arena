@@ -4,7 +4,7 @@ benchmark:
   outputDir: benchmark/runs
   reportDir: benchmark/reports
   claude:
-    baseUrl: https://bec.bytefuture.ai/v1
+    baseUrl: https://bec.bytefuture.ai
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
