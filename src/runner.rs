@@ -22,6 +22,7 @@ use crate::types::{
 use crate::util::{anthropic_base_url_for_claude, now_iso};
 
 const VERBOSE_OUTPUT_LIMIT_CHARS: usize = 24 * 1024;
+const BASELINE_COMMIT_COMMAND: &str = "git commit --no-gpg-sign -m baseline";
 
 /// Replaces every run of characters outside `[A-Za-z0-9_-]` with a single dash.
 fn sanitize(value: &str) -> String {
@@ -797,7 +798,7 @@ async fn prepare_workspace(
             return Some(result);
         }
     }
-    for command in ["git add .", "git commit -m baseline"] {
+    for command in ["git add .", BASELINE_COMMIT_COMMAND] {
         let result = run_shell_command(command, &options()).await;
         if result.exit_code != Some(0) {
             return Some(result);
@@ -1537,6 +1538,24 @@ mod tests {
         assert!(truncated.starts_with("[output truncated; omitted "));
         assert!(truncated.ends_with("tail"));
         assert!(!truncated.ends_with(&text));
+    }
+
+    #[tokio::test]
+    async fn prepare_workspace_baseline_commit_ignores_gpg_signing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "content\n").unwrap();
+        let mut task = loaded_task("task-a");
+        task.config.setup = vec![
+            "git config commit.gpgsign true".to_string(),
+            "git config gpg.program false".to_string(),
+        ];
+
+        let failed = prepare_workspace(&task, dir.path(), Duration::from_secs(10), &[]).await;
+        assert!(
+            failed.is_none(),
+            "prepare_workspace failed: {:?}",
+            failed.map(|result| (result.command, result.stdout, result.stderr))
+        );
     }
 
     fn loaded_task(id: &str) -> LoadedTask {
