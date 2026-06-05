@@ -3,6 +3,7 @@
 //! grows under test.
 
 pub mod article;
+pub mod cli;
 pub mod command;
 pub mod config;
 pub mod evaluator;
