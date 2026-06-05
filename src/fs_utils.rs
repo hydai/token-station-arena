@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -44,6 +44,20 @@ pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<()>
     write_text(path, &format!("{json}\n"))
 }
 
+/// Recursively finds every file named `file_name` under `dir`.
+pub fn find_files(dir: impl AsRef<Path>, file_name: &str) -> Result<Vec<PathBuf>> {
+    let mut matches = Vec::new();
+    for entry in walkdir::WalkDir::new(dir.as_ref())
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_file() && entry.file_name() == file_name {
+            matches.push(entry.into_path());
+        }
+    }
+    Ok(matches)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,5 +91,16 @@ mod tests {
     fn path_exists_is_false_for_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!path_exists(dir.path().join("nope")));
+    }
+
+    #[test]
+    fn find_files_locates_nested_matches_only() {
+        let dir = tempfile::tempdir().unwrap();
+        write_text(dir.path().join("a/result.json"), "{}").unwrap();
+        write_text(dir.path().join("b/c/result.json"), "{}").unwrap();
+        write_text(dir.path().join("b/other.txt"), "x").unwrap();
+        let found = find_files(dir.path(), "result.json").unwrap();
+        assert_eq!(found.len(), 2, "found: {found:?}");
+        assert!(found.iter().all(|p| p.ends_with("result.json")));
     }
 }

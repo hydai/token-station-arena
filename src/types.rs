@@ -220,3 +220,59 @@ pub struct TokenUsage {
     pub total: Option<i64>,
     pub estimated_cost_usd: Option<f64>,
 }
+
+/// Claude session metadata recorded for a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeRunMeta {
+    pub session_id: Option<String>,
+    pub output_format: String,
+    pub command_strategy: Vec<String>,
+}
+
+/// Relative paths to the artifacts saved for a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Artifacts {
+    pub stdout: String,
+    pub stderr: String,
+    pub claude_output: String,
+    pub diff: String,
+    pub workspace: String,
+    pub checks: String,
+    pub model_config: String,
+}
+
+/// Placeholder for optional human audit of a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HumanAudit {
+    pub required_for_mvp: bool,
+    pub score: Option<f64>,
+    pub notes: String,
+}
+
+/// The complete result of one task/model/run, serialized to `result.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunResult {
+    pub run_id: String,
+    pub task_id: String,
+    pub model_id: String,
+    pub provider_model_id: String,
+    pub run_index: u32,
+    pub provider: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_ms: u64,
+    pub claude_exit_code: Option<i32>,
+    pub claude: ClaudeRunMeta,
+    pub checks: Vec<CheckResult>,
+    pub completion: Completion,
+    pub tokens: Option<TokenUsage>,
+    pub judge: JudgeResult,
+    pub artifacts: Artifacts,
+    pub changed_files: Vec<String>,
+    pub warnings: Vec<String>,
+    pub human_audit: HumanAudit,
+}
