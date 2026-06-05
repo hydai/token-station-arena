@@ -229,7 +229,7 @@ benchmark:
   outputDir: runs
   reportDir: reports
   claude:
-    baseUrl: https://models.bytefuture.ai
+    baseUrl: https://bec.bytefuture.ai/v1
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
@@ -334,13 +334,14 @@ Example fixture settings:
 
 ## 11. Claude Command Execution
 
-Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with `ANTHROPIC_BASE_URL=https://models.bytefuture.ai`, authenticate with the ByteFuture API key, and pass the selected model ID through Claude Code model selection.
+Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with `ANTHROPIC_BASE_URL=https://bec.bytefuture.ai/v1`, authenticate with the ByteFuture API key, and pass the selected model ID through Claude Code model selection.
 
 The runner should execute a command equivalent to:
 
 ```bash
-ANTHROPIC_BASE_URL=https://models.bytefuture.ai \
+ANTHROPIC_BASE_URL=https://bec.bytefuture.ai/v1 \
 ANTHROPIC_API_KEY="<bytefuture-api-key>" \
+ANTHROPIC_AUTH_TOKEN="<bytefuture-api-key>" \
 ANTHROPIC_CUSTOM_MODEL_OPTION="<bytefuture-model-id>" \
 ANTHROPIC_MODEL="<bytefuture-model-id>" \
 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
@@ -352,8 +353,8 @@ claude --bare -p "<task prompt>" \
 
 The preferred strategy is:
 
-1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to `models.bytefuture.ai`.
-2. Use `ANTHROPIC_API_KEY` for ByteFuture gateway authentication.
+1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to `bec.bytefuture.ai/v1`.
+2. Use `ANTHROPIC_AUTH_TOKEN` for ByteFuture gateway authentication because it requires `Authorization: Bearer <key>`. The runner may derive this from `ANTHROPIC_API_KEY` for compatibility.
 3. Use `--model` and `ANTHROPIC_MODEL` with the exact ByteFuture model ID.
 4. Use `ANTHROPIC_CUSTOM_MODEL_OPTION` so Claude Code does not reject gateway-specific model IDs.
 5. Use `--settings .claude/settings.json` to load the Rust fixture's project-local permission policy.
@@ -361,15 +362,15 @@ The preferred strategy is:
 7. Use `--bare` for reproducible scripted runs while explicitly loading the settings file required by the fixture.
 8. Use `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` if the gateway rejects Anthropic-specific beta headers or tool-schema fields.
 
-Optional gateway discovery can be enabled with `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` if `models.bytefuture.ai` exposes a compatible `/v1/models` endpoint and the benchmark operator wants Claude Code to discover available models.
+ByteFuture model catalog checks should use the public `/api/models` endpoint. Do not rely on Claude Code gateway discovery for this benchmark unless ByteFuture also exposes a compatible `/v1/models` endpoint.
 
 The runner must log the exact command strategy used, while redacting secrets.
 
 Required environment variables should be documented in `.env.example`, for example:
 
 ```bash
-ANTHROPIC_API_KEY=
-BYTEFUTURE_BASE_URL=https://models.bytefuture.ai
+ANTHROPIC_AUTH_TOKEN=
+BYTEFUTURE_BASE_URL=https://bec.bytefuture.ai/v1
 TOKEN_STATION_DUMP_PATH=reports/token-station-usage.json
 JUDGE_MODEL_ID=anthropic/claude-opus-4-6
 ```

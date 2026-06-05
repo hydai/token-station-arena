@@ -1,6 +1,6 @@
 # Token Station Arena
 
-Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through `models.bytefuture.ai`, importing Token Station usage dumps, and generating an evidence-backed Markdown article.
+Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through the ByteFuture gateway, importing Token Station usage dumps, and generating an evidence-backed Markdown article.
 
 The MVP includes:
 
@@ -17,7 +17,7 @@ The MVP includes:
 - Rust and Cargo (1.85 or newer).
 - `git`.
 - `claude` available on `PATH` for real benchmark runs.
-- A ByteFuture API key exposed as `ANTHROPIC_API_KEY`.
+- A ByteFuture API key exposed as `ANTHROPIC_AUTH_TOKEN`, `BYTEFUTURE_AUTH_TOKEN`, or `ANTHROPIC_API_KEY`.
 
 ## Setup
 
@@ -30,9 +30,11 @@ cp .env.example .env
 Edit `.env` and set at least:
 
 ```bash
-ANTHROPIC_API_KEY=<your-bytefuture-api-key>
-BYTEFUTURE_BASE_URL=https://models.bytefuture.ai
+ANTHROPIC_AUTH_TOKEN=<your-bytefuture-api-key>
+BYTEFUTURE_BASE_URL=https://bec.bytefuture.ai/v1
 ```
+
+`ANTHROPIC_API_KEY` is also accepted for compatibility. For ByteFuture URLs the runner forwards the key to Claude Code as `ANTHROPIC_AUTH_TOKEN` so requests use `Authorization: Bearer <key>`.
 
 This project reads environment variables from the shell. Before running real benchmarks, export the file into your shell session:
 
@@ -100,7 +102,7 @@ For every selected task/model/run combination, the runner:
 1. Copies the task fixture into `benchmark/runs/<run-id>/workspace`.
 2. Initializes a git baseline for diff capture.
 3. Runs task setup commands such as `cargo fetch`.
-4. Calls `claude --bare -p <task prompt>` through `models.bytefuture.ai`.
+4. Calls `claude --bare -p <task prompt>` through `bec.bytefuture.ai/v1`.
 5. Loads the fixture-local `.claude/settings.json`.
 6. Captures stdout, stderr, Claude JSON output, git diff, changed files, and timings.
 7. Runs deterministic checks from `task.yml`.
@@ -108,7 +110,7 @@ For every selected task/model/run combination, the runner:
 9. Writes `result.json`.
 10. Regenerates the Markdown article unless disabled.
 
-Secrets such as `ANTHROPIC_API_KEY` are redacted from command output artifacts.
+Secrets such as `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `BYTEFUTURE_AUTH_TOKEN` are redacted from command output artifacts.
 
 ## Tasks
 

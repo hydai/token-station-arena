@@ -141,11 +141,8 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
         return Ok(());
     }
 
-    if std::env::var("ANTHROPIC_API_KEY")
-        .unwrap_or_default()
-        .is_empty()
-    {
-        bail!("ANTHROPIC_API_KEY is required for real benchmark runs. Use --dry-run to inspect the plan without calling Claude.");
+    if benchmark_auth_secret().is_none() {
+        bail!("ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or BYTEFUTURE_AUTH_TOKEN is required for real benchmark runs. Use --dry-run to inspect the plan without calling Claude.");
     }
 
     ensure_dir(&output_dir)?;
@@ -688,11 +685,17 @@ fn claude_env(benchmark: &BenchmarkConfig, model: &ModelConfig) -> BTreeMap<Stri
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| benchmark.claude.base_url.clone());
     let mut env = BTreeMap::new();
-    env.insert("ANTHROPIC_BASE_URL".to_string(), base_url);
+    env.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
     env.insert(
         "ANTHROPIC_API_KEY".to_string(),
-        std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+        anthropic_api_key().unwrap_or_default(),
     );
+    if should_send_auth_token(&base_url) {
+        env.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            anthropic_auth_token().unwrap_or_default(),
+        );
+    }
     env.insert(
         "ANTHROPIC_CUSTOM_MODEL_OPTION".to_string(),
         model.model.clone(),
@@ -711,6 +714,7 @@ fn command_strategy_labels() -> Vec<String> {
     [
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_CUSTOM_MODEL_OPTION",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
@@ -737,11 +741,45 @@ fn default_artifacts() -> Artifacts {
 }
 
 fn secret_list() -> Vec<String> {
-    std::env::var("ANTHROPIC_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .into_iter()
-        .collect()
+    let mut secrets = Vec::new();
+    for key in [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "BYTEFUTURE_AUTH_TOKEN",
+    ] {
+        if let Some(value) = env_nonempty(key) {
+            if !secrets.contains(&value) {
+                secrets.push(value);
+            }
+        }
+    }
+    secrets
+}
+
+fn benchmark_auth_secret() -> Option<String> {
+    anthropic_api_key().or_else(anthropic_auth_token)
+}
+
+fn anthropic_api_key() -> Option<String> {
+    env_nonempty("ANTHROPIC_API_KEY")
+        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
+        .or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
+}
+
+fn anthropic_auth_token() -> Option<String> {
+    env_nonempty("ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
+        .or_else(|| env_nonempty("ANTHROPIC_API_KEY"))
+}
+
+fn should_send_auth_token(base_url: &str) -> bool {
+    base_url.contains("bytefuture.ai")
+        || env_nonempty("ANTHROPIC_AUTH_TOKEN").is_some()
+        || env_nonempty("BYTEFUTURE_AUTH_TOKEN").is_some()
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|value| !value.is_empty())
 }
 
 fn build_run_id(task_id: &str, model_id: &str, run_index: u32) -> String {
@@ -854,7 +892,7 @@ fn print_dry_run_plan(
         ""
     };
     println!(
-        "ANTHROPIC_BASE_URL=<BYTEFUTURE_BASE_URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
+        "ANTHROPIC_BASE_URL=<BYTEFUTURE_BASE_URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_AUTH_TOKEN=[REDACTED] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
     );
     for task in tasks {
         println!("Task: {} ({})", task.config.id, task.fixture_dir.display());

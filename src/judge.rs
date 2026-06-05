@@ -217,10 +217,10 @@ pub async fn run_judge(input: &JudgeRunInput<'_>) -> JudgeResult {
     let base_url = env_nonempty("BYTEFUTURE_BASE_URL")
         .unwrap_or_else(|| input.benchmark.claude.base_url.clone());
     let mut env = vec![
-        ("ANTHROPIC_BASE_URL".to_string(), base_url),
+        ("ANTHROPIC_BASE_URL".to_string(), base_url.clone()),
         (
             "ANTHROPIC_API_KEY".to_string(),
-            std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            anthropic_api_key().unwrap_or_default(),
         ),
         (
             "ANTHROPIC_CUSTOM_MODEL_OPTION".to_string(),
@@ -228,6 +228,12 @@ pub async fn run_judge(input: &JudgeRunInput<'_>) -> JudgeResult {
         ),
         ("ANTHROPIC_MODEL".to_string(), model_id.clone()),
     ];
+    if should_send_auth_token(&base_url) {
+        env.push((
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            anthropic_auth_token().unwrap_or_default(),
+        ));
+    }
     if input.benchmark.claude.disable_experimental_betas {
         env.push((
             "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS".to_string(),
@@ -313,6 +319,24 @@ fn failed_judge(model_id: &str, message: String) -> JudgeResult {
 
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+fn anthropic_api_key() -> Option<String> {
+    env_nonempty("ANTHROPIC_API_KEY")
+        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
+        .or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
+}
+
+fn anthropic_auth_token() -> Option<String> {
+    env_nonempty("ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
+        .or_else(|| env_nonempty("ANTHROPIC_API_KEY"))
+}
+
+fn should_send_auth_token(base_url: &str) -> bool {
+    base_url.contains("bytefuture.ai")
+        || env_nonempty("ANTHROPIC_AUTH_TOKEN").is_some()
+        || env_nonempty("BYTEFUTURE_AUTH_TOKEN").is_some()
 }
 
 fn number_or_null(value: Option<&Value>) -> Option<f64> {

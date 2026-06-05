@@ -97,11 +97,19 @@ pub async fn run() -> Result<()> {
 }
 
 fn secret_list() -> Vec<String> {
-    std::env::var("ANTHROPIC_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .into_iter()
-        .collect()
+    let mut secrets = Vec::new();
+    for key in [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "BYTEFUTURE_AUTH_TOKEN",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            if !value.is_empty() && !secrets.contains(&value) {
+                secrets.push(value);
+            }
+        }
+    }
+    secrets
 }
 
 async fn judge_command(run_id: &str) -> Result<()> {
