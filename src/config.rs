@@ -77,13 +77,13 @@ mod tests {
 models:
   - id: gpt-oss-20b
     displayName: GPT OSS 20B
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: groq/gpt-oss-20b
     claudeModelStrategy: custom-model-option
     enabled: true
   - id: kimi-k2-5
     displayName: Kimi K2.5
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: kimi/kimi-k2.5
     claudeModelStrategy: custom-model-option
     enabled: false
@@ -108,24 +108,24 @@ benchmark:
   outputDir: benchmark/runs
   reportDir: benchmark/reports
   claude:
-    baseUrl: https://bec.bytefuture.ai/v1
+    baseUrl: https://gateway.example
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
   judge:
     enabled: true
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: anthropic/claude-opus-4-6
     minimumScore: 4
   article:
-    title: "Comparing Claude Code Tasks Across Models on ByteFuture"
+    title: "Comparing Claude Code Tasks Across Models"
     outputFile: benchmark/reports/article.md
 "#;
         let cfg = parse_benchmark_config(yaml).unwrap();
         assert_eq!(cfg.runs_per_task_model, 3);
         assert_eq!(cfg.timeout_seconds, 1800);
         assert_eq!(cfg.jobs, Some(2));
-        assert_eq!(cfg.claude.base_url, "https://bec.bytefuture.ai/v1");
+        assert_eq!(cfg.claude.base_url, "https://gateway.example");
         assert!(cfg.claude.disable_experimental_betas);
         assert_eq!(cfg.judge.minimum_score, 4.0);
         assert_eq!(cfg.article.output_file, "benchmark/reports/article.md");
@@ -172,8 +172,8 @@ benchmark:
             PathBuf::from("/root/benchmark/runs")
         );
         assert_eq!(
-            resolve_project_path("/root", "/abs/dump.json"),
-            PathBuf::from("/abs/dump.json")
+            resolve_project_path("/root", "/abs/report.json"),
+            PathBuf::from("/abs/report.json")
         );
     }
 }

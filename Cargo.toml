@@ -3,7 +3,7 @@ name = "token-station-arena"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Automated multi-model Claude Code benchmark and article generator for models.bytefuture.ai."
+description = "Automated multi-model Claude Code benchmark and article generator for configurable Anthropic-compatible gateways."
 
 # The orchestrator is the only crate in this workspace. Each benchmark fixture
 # under benchmark/tasks/*/fixture/ is its own independent Cargo workspace, and

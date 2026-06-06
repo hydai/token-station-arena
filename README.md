@@ -1,11 +1,11 @@
 # Token Station Arena
 
-Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through the ByteFuture gateway and generating an evidence-backed Markdown article.
+Automated Claude Code benchmark tooling for running the same Rust coding tasks across multiple models through a configurable Anthropic-compatible gateway and generating an evidence-backed Markdown article.
 
 The MVP includes:
 
 - A Rust benchmark runner built as a single binary (`tokio`, `clap`, `serde`).
-- Canonical ByteFuture model configuration.
+- Configurable gateway and model configuration.
 - Three Rust benchmark tasks with isolated fixtures.
 - Deterministic checks with `cargo test`, `cargo check`, `cargo clippy`, and task-specific scripts.
 - Optional LLM judge scoring.
@@ -17,7 +17,7 @@ The MVP includes:
 - Rust and Cargo (1.85 or newer).
 - `git`.
 - `claude` available on `PATH` for real benchmark runs.
-- A ByteFuture API key exposed as `ANTHROPIC_AUTH_TOKEN`, `BYTEFUTURE_AUTH_TOKEN`, or `ANTHROPIC_API_KEY`.
+- An API key or bearer token for your Anthropic-compatible gateway, exposed as `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`.
 
 ## Setup
 
@@ -30,12 +30,20 @@ cp .env.example .env
 Edit `.env` and set at least:
 
 ```bash
-ANTHROPIC_AUTH_TOKEN=<your-bytefuture-api-key>
-BYTEFUTURE_BASE_URL=https://bec.bytefuture.ai/v1
+ANTHROPIC_AUTH_TOKEN=<your-gateway-api-key>
+ANTHROPIC_BASE_URL=https://gateway.example
 ```
 
-`ANTHROPIC_API_KEY` is also accepted for compatibility. For ByteFuture URLs the runner forwards the key to Claude Code as `ANTHROPIC_AUTH_TOKEN` so requests use `Authorization: Bearer <key>`.
-OpenAI-compatible clients use the `/v1` base URL shown above; before invoking Claude Code, the runner trims the final `/v1` because Claude Code appends Anthropic paths such as `/v1/messages` itself.
+`ANTHROPIC_API_KEY` is also accepted for direct Anthropic-style API key auth. When `ANTHROPIC_AUTH_TOKEN` is set, the runner forwards it to Claude Code so gateways that require `Authorization: Bearer <key>` work without vendor-specific logic.
+
+Custom gateway endpoint:
+
+```bash
+ANTHROPIC_BASE_URL=https://custom-gateway.example
+ANTHROPIC_AUTH_TOKEN=<your-api-key>
+```
+
+Set `ANTHROPIC_BASE_URL` to the gateway root, without `/v1`; Claude Code appends Anthropic paths such as `/v1/messages` itself.
 
 This project reads environment variables from the shell. Before running real benchmarks, export the file into your shell session:
 
@@ -54,7 +62,7 @@ cargo build --release
 cargo test
 ```
 
-Preview the benchmark plan without calling Claude or ByteFuture:
+Preview the benchmark plan without calling Claude or a remote gateway:
 
 ```bash
 cargo run --release -- benchmark --tasks all --models all --runs 1 --dry-run
@@ -107,9 +115,9 @@ The runner also sets these environment variables for the subprocess:
 
 | Variable | Meaning |
 | --- | --- |
-| `ANTHROPIC_BASE_URL` | Normalized ByteFuture base URL for Claude Code. |
-| `ANTHROPIC_API_KEY` | API key forwarded from `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `BYTEFUTURE_AUTH_TOKEN`. |
-| `ANTHROPIC_AUTH_TOKEN` | Bearer token used for ByteFuture gateway requests. |
+| `ANTHROPIC_BASE_URL` | Normalized gateway base URL for Claude Code. |
+| `ANTHROPIC_API_KEY` | API key forwarded from `ANTHROPIC_API_KEY`, or from `ANTHROPIC_AUTH_TOKEN` when only bearer auth is configured. |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token forwarded when `ANTHROPIC_AUTH_TOKEN` is set. |
 | `ANTHROPIC_CUSTOM_MODEL_OPTION` | Provider model ID from `benchmark/config/models.yml`. |
 | `ANTHROPIC_MODEL` | Same provider model ID, matching Claude Code model selection. |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | Set when `benchmark.claude.disableExperimentalBetas` is true. |
@@ -123,7 +131,7 @@ For every selected task/model/run combination, the runner:
 1. Copies the task fixture into `benchmark/runs/<run-id>/workspace`.
 2. Initializes a git baseline for diff capture.
 3. Runs task setup commands such as `cargo fetch`.
-4. Calls `claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json` through `bec.bytefuture.ai`.
+4. Calls `claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json` through the configured gateway.
 5. Loads the fixture-local `.claude/settings.json`.
 6. Captures stdout, stderr, Claude JSON output, git diff, and changed files.
 7. Extracts Claude Code JSON statistics, including token counts, cost, `duration_ms`, API time, TTFT, and turn count.
@@ -132,7 +140,7 @@ For every selected task/model/run combination, the runner:
 10. Writes `result.json`.
 11. Regenerates the Markdown article unless disabled.
 
-Secrets such as `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `BYTEFUTURE_AUTH_TOKEN` are redacted from command output artifacts.
+Secrets such as `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are redacted from command output artifacts.
 
 ## Tasks
 
@@ -154,6 +162,8 @@ Each fixture is its own Cargo workspace; the orchestrator excludes `benchmark/ta
 ## Models
 
 Models are configured in `benchmark/config/models.yml`.
+
+The checked-in model list is a sample. Update `provider`, `model`, and `benchmark/config/benchmark.yml`'s `claude.baseUrl` to match the gateway and model IDs you want to test.
 
 Enabled model IDs:
 

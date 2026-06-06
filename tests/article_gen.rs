@@ -13,7 +13,7 @@ fn result_json(run_id: &str, model_id: &str, task_id: &str, status: &str) -> ser
         "modelId": model_id,
         "providerModelId": format!("prov/{model_id}"),
         "runIndex": 1,
-        "provider": "models.bytefuture.ai",
+        "provider": "anthropic-compatible-gateway",
         "startedAt": "2026-06-04T10:00:00.000Z",
         "finishedAt": "2026-06-04T10:03:00.000Z",
         "durationMs": 180000,
@@ -22,8 +22,7 @@ fn result_json(run_id: &str, model_id: &str, task_id: &str, status: &str) -> ser
         "checks": [],
         "completion": { "status": status, "reason": "r" },
         "tokens": {
-            "source": "token-station-backend-dump", "correlation": "execution-time-window",
-            "dumpFile": "d.json", "input": 12000, "output": 3000, "cacheCreationInput": 0,
+            "input": 12000, "output": 3000, "cacheCreationInput": 0,
             "cacheReadInput": 0, "total": 15000, "estimatedCostUsd": 0.08
         },
         "judge": {

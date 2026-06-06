@@ -215,8 +215,7 @@ pub async fn run_judge(input: &JudgeRunInput<'_>) -> JudgeResult {
         return failed_judge(&model_id, format!("Failed to write judge prompt: {error}"));
     }
 
-    let base_url = env_nonempty("BYTEFUTURE_BASE_URL")
-        .unwrap_or_else(|| input.benchmark.claude.base_url.clone());
+    let base_url = gateway_base_url(input.benchmark);
     let anthropic_base_url = anthropic_base_url_for_claude(&base_url);
     let mut env = vec![
         ("ANTHROPIC_BASE_URL".to_string(), anthropic_base_url),
@@ -230,11 +229,8 @@ pub async fn run_judge(input: &JudgeRunInput<'_>) -> JudgeResult {
         ),
         ("ANTHROPIC_MODEL".to_string(), model_id.clone()),
     ];
-    if should_send_auth_token(&base_url) {
-        env.push((
-            "ANTHROPIC_AUTH_TOKEN".to_string(),
-            anthropic_auth_token().unwrap_or_default(),
-        ));
+    if let Some(token) = anthropic_auth_token() {
+        env.push(("ANTHROPIC_AUTH_TOKEN".to_string(), token));
     }
     if input.benchmark.claude.disable_experimental_betas {
         env.push((
@@ -324,21 +320,15 @@ fn env_nonempty(key: &str) -> Option<String> {
 }
 
 fn anthropic_api_key() -> Option<String> {
-    env_nonempty("ANTHROPIC_API_KEY")
-        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
-        .or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
+    env_nonempty("ANTHROPIC_API_KEY").or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
 }
 
 fn anthropic_auth_token() -> Option<String> {
     env_nonempty("ANTHROPIC_AUTH_TOKEN")
-        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
-        .or_else(|| env_nonempty("ANTHROPIC_API_KEY"))
 }
 
-fn should_send_auth_token(base_url: &str) -> bool {
-    base_url.contains("bytefuture.ai")
-        || env_nonempty("ANTHROPIC_AUTH_TOKEN").is_some()
-        || env_nonempty("BYTEFUTURE_AUTH_TOKEN").is_some()
+fn gateway_base_url(benchmark: &BenchmarkConfig) -> String {
+    env_nonempty("ANTHROPIC_BASE_URL").unwrap_or_else(|| benchmark.claude.base_url.clone())
 }
 
 fn number_or_null(value: Option<&Value>) -> Option<f64> {
@@ -444,7 +434,7 @@ mod tests {
         ModelConfig {
             id: "deepseek-v4-flash".into(),
             display_name: "DeepSeek".into(),
-            provider: "models.bytefuture.ai".into(),
+            provider: "anthropic-compatible-gateway".into(),
             model: "deepseek/deepseek-v4-flash".into(),
             claude_model_strategy: "custom-model-option".into(),
             enabled: true,

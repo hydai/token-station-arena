@@ -33,20 +33,20 @@ mod tests {
     #[test]
     fn normalizes_openai_style_base_urls_for_claude_code() {
         assert_eq!(
-            anthropic_base_url_for_claude("https://bec.bytefuture.ai/v1"),
-            "https://bec.bytefuture.ai"
+            anthropic_base_url_for_claude("https://gateway.example/v1"),
+            "https://gateway.example"
         );
         assert_eq!(
-            anthropic_base_url_for_claude("https://bec.bytefuture.ai/v1/"),
-            "https://bec.bytefuture.ai"
+            anthropic_base_url_for_claude("https://gateway.example/v1/"),
+            "https://gateway.example"
         );
         assert_eq!(
             anthropic_base_url_for_claude("https://gateway.example/anthropic/v1"),
             "https://gateway.example/anthropic"
         );
         assert_eq!(
-            anthropic_base_url_for_claude("https://bec.bytefuture.ai"),
-            "https://bec.bytefuture.ai"
+            anthropic_base_url_for_claude("https://gateway.example"),
+            "https://gateway.example"
         );
     }
 }

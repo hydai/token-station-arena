@@ -5,15 +5,15 @@ benchmark:
   outputDir: benchmark/runs
   reportDir: benchmark/reports
   claude:
-    baseUrl: https://bec.bytefuture.ai
+    baseUrl: https://gateway.example
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
   judge:
     enabled: true
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: anthropic/claude-opus-4-6
     minimumScore: 4
   article:
-    title: "Comparing Claude Code Tasks Across Models on ByteFuture"
+    title: "Comparing Claude Code Tasks Across Models"
     outputFile: benchmark/reports/article.md

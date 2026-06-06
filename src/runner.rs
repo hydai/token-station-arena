@@ -162,11 +162,7 @@ fn extract_claude_token_usage(output: &Value) -> Option<TokenUsage> {
             ));
         }
         if totals.has_usage() {
-            return Some(totals.into_token_usage(
-                "claude-output-json",
-                "direct-claude-output",
-                "claude-output.json",
-            ));
+            return Some(totals.into_token_usage());
         }
     }
 
@@ -215,11 +211,7 @@ fn extract_claude_token_usage(output: &Value) -> Option<TokenUsage> {
     totals.add_cost(first_f64(output, &["total_cost_usd", "totalCostUsd"]));
 
     if totals.has_usage() {
-        Some(totals.into_token_usage(
-            "claude-output-json",
-            "direct-claude-output",
-            "claude-output.json",
-        ))
+        Some(totals.into_token_usage())
     } else {
         None
     }
@@ -283,7 +275,7 @@ impl UsageAccumulator {
             || self.has_cost
     }
 
-    fn into_token_usage(self, source: &str, correlation: &str, dump_file: &str) -> TokenUsage {
+    fn into_token_usage(self) -> TokenUsage {
         let total = if self.has_input
             || self.has_output
             || self.has_cache_creation
@@ -294,9 +286,6 @@ impl UsageAccumulator {
             None
         };
         TokenUsage {
-            source: source.to_string(),
-            correlation: correlation.to_string(),
-            dump_file: dump_file.to_string(),
             input: self.has_input.then_some(self.input),
             output: self.has_output.then_some(self.output),
             cache_creation_input: self.has_cache_creation.then_some(self.cache_creation_input),
@@ -422,7 +411,7 @@ pub async fn run_benchmark(args: &BenchmarkArgs) -> Result<()> {
     }
 
     if benchmark_auth_secret().is_none() {
-        bail!("ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or BYTEFUTURE_AUTH_TOKEN is required for real benchmark runs. Use --dry-run to inspect the plan without calling Claude.");
+        bail!("ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is required for real benchmark runs. Use --dry-run to inspect the plan without calling Claude.");
     }
 
     ensure_dir(&output_dir)?;
@@ -1092,10 +1081,7 @@ async fn capture_changed_files(workspace_dir: &Path, secrets: &[String]) -> Vec<
 }
 
 fn claude_env(benchmark: &BenchmarkConfig, model: &ModelConfig) -> BTreeMap<String, String> {
-    let base_url = std::env::var("BYTEFUTURE_BASE_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| benchmark.claude.base_url.clone());
+    let base_url = gateway_base_url(benchmark);
     let anthropic_base_url = anthropic_base_url_for_claude(&base_url);
     let mut env = BTreeMap::new();
     env.insert("ANTHROPIC_BASE_URL".to_string(), anthropic_base_url);
@@ -1103,11 +1089,8 @@ fn claude_env(benchmark: &BenchmarkConfig, model: &ModelConfig) -> BTreeMap<Stri
         "ANTHROPIC_API_KEY".to_string(),
         anthropic_api_key().unwrap_or_default(),
     );
-    if should_send_auth_token(&base_url) {
-        env.insert(
-            "ANTHROPIC_AUTH_TOKEN".to_string(),
-            anthropic_auth_token().unwrap_or_default(),
-        );
+    if let Some(token) = anthropic_auth_token() {
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), token);
     }
     env.insert(
         "ANTHROPIC_CUSTOM_MODEL_OPTION".to_string(),
@@ -1155,11 +1138,7 @@ fn default_artifacts() -> Artifacts {
 
 fn secret_list() -> Vec<String> {
     let mut secrets = Vec::new();
-    for key in [
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "BYTEFUTURE_AUTH_TOKEN",
-    ] {
+    for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] {
         if let Some(value) = env_nonempty(key) {
             if !secrets.contains(&value) {
                 secrets.push(value);
@@ -1173,22 +1152,16 @@ fn benchmark_auth_secret() -> Option<String> {
     anthropic_api_key().or_else(anthropic_auth_token)
 }
 
+fn gateway_base_url(benchmark: &BenchmarkConfig) -> String {
+    env_nonempty("ANTHROPIC_BASE_URL").unwrap_or_else(|| benchmark.claude.base_url.clone())
+}
+
 fn anthropic_api_key() -> Option<String> {
-    env_nonempty("ANTHROPIC_API_KEY")
-        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
-        .or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
+    env_nonempty("ANTHROPIC_API_KEY").or_else(|| env_nonempty("ANTHROPIC_AUTH_TOKEN"))
 }
 
 fn anthropic_auth_token() -> Option<String> {
     env_nonempty("ANTHROPIC_AUTH_TOKEN")
-        .or_else(|| env_nonempty("BYTEFUTURE_AUTH_TOKEN"))
-        .or_else(|| env_nonempty("ANTHROPIC_API_KEY"))
-}
-
-fn should_send_auth_token(base_url: &str) -> bool {
-    base_url.contains("bytefuture.ai")
-        || env_nonempty("ANTHROPIC_AUTH_TOKEN").is_some()
-        || env_nonempty("BYTEFUTURE_AUTH_TOKEN").is_some()
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -1310,7 +1283,7 @@ fn print_dry_run_plan(
         ""
     };
     println!(
-        "ANTHROPIC_BASE_URL=<normalized BYTEFUTURE_BASE_URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_AUTH_TOKEN=[REDACTED] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
+        "ANTHROPIC_BASE_URL=<normalized gateway base URL> ANTHROPIC_API_KEY=[REDACTED] ANTHROPIC_AUTH_TOKEN=[REDACTED when configured] ANTHROPIC_CUSTOM_MODEL_OPTION=<provider-model-id> ANTHROPIC_MODEL=<provider-model-id> {disable}claude --bare -p <task prompt> --settings .claude/settings.json --model <provider-model-id> --output-format json"
     );
     for task in tasks {
         println!("Task: {} ({})", task.config.id, task.fixture_dir.display());
@@ -1474,7 +1447,6 @@ mod tests {
 
         let tokens = extract_claude_token_usage(&output).expect("tokens parsed");
 
-        assert_eq!(tokens.source, "claude-output-json");
         assert_eq!(tokens.input, Some(110));
         assert_eq!(tokens.output, Some(22));
         assert_eq!(tokens.cache_creation_input, Some(3));
@@ -1585,7 +1557,7 @@ mod tests {
         ModelConfig {
             id: id.to_string(),
             display_name: id.to_string(),
-            provider: "models.bytefuture.ai".to_string(),
+            provider: "anthropic-compatible-gateway".to_string(),
             model: format!("provider/{id}"),
             claude_model_strategy: "custom-model-option".to_string(),
             enabled: true,

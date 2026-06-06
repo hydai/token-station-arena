@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-This project builds an automated system that runs the same developer tasks across multiple LLMs through `models.bytefuture.ai`, using `claude -p` as the execution interface. The system evaluates whether each task was completed successfully, records Claude Code JSON statistics such as tokens, cost, and duration, and generates a publishable technical article that compares model behavior with reproducible evidence.
+This project builds an automated system that runs the same developer tasks across multiple LLMs through a configurable Anthropic-compatible gateway, using `claude -p` as the execution interface. The system evaluates whether each task was completed successfully, records Claude Code JSON statistics such as tokens, cost, and duration, and generates a publishable technical article that compares model behavior with reproducible evidence.
 
-The primary output is not a simple announcement that ByteFuture supports a model such as Nemotron. The output is a useful developer guide that shows how different models perform on realistic Claude Code workflows, including `gpt-oss-20b`, `gpt-oss-120b`, DeepSeek models, Kimi, and Nemotron 3 series models.
+The primary output is a useful developer guide that shows how different models perform on realistic Claude Code workflows, including `gpt-oss-20b`, `gpt-oss-120b`, DeepSeek models, Kimi, and Nemotron 3 series models. It should be usable with any gateway that can route Claude Code requests to the configured model IDs.
 
 ## 2. Goals
 
 - Run the same coding tasks across selected models using `claude -p`.
-- Use `models.bytefuture.ai` as the model provider for every experiment.
+- Support configurable gateway endpoints and provider model IDs instead of requiring a specific vendor.
 - Measure task completion with deterministic checks and an LLM judge.
 - Detect unrelated or excessive code changes with an LLM judge.
 - Record tokens, cost, API timing, TTFT, turn count, command output, generated diffs, and test results.
@@ -28,7 +28,7 @@ The primary output is not a simple announcement that ByteFuture supports a model
 ## 4. Target Audience
 
 - Developers evaluating which models to use with Claude Code-style workflows.
-- ByteFuture users who want practical examples for `models.bytefuture.ai`.
+- Users of Anthropic-compatible gateways who want practical examples for routing Claude Code through a custom endpoint.
 - Internal marketing, developer relations, and engineering teams who need evidence-backed content.
 - Users who care about model cost, token count, latency, and real task completion.
 
@@ -36,7 +36,7 @@ The primary output is not a simple announcement that ByteFuture supports a model
 
 The generated article should answer:
 
-> Can developers complete the same Claude Code task using different models through `models.bytefuture.ai`, and how do those models compare on completion, tokens, latency, and quality?
+> Can developers complete the same Claude Code task using different models through a configurable gateway, and how do those models compare on completion, tokens, latency, and quality?
 
 The article should avoid vague claims such as:
 
@@ -59,7 +59,7 @@ The first version should include:
 - Generated git diff capture.
 - Markdown report generation.
 
-Canonical first-run model IDs from the ByteFuture catalog:
+Canonical first-run provider model IDs for the sample gateway configuration:
 
 - `groq/gpt-oss-20b`
 - `groq/gpt-oss-120b`
@@ -89,7 +89,7 @@ The system consists of five main components:
 
 2. `model-runner`
    - Invokes `claude -p` for each task/model pair.
-   - Passes model configuration through `models.bytefuture.ai`.
+   - Passes model configuration through the configured gateway.
    - Captures stdout, stderr, exit code, start time, end time, and workspace diff.
 
 3. `completion-evaluator`
@@ -165,49 +165,49 @@ Because each fixture under `benchmark/tasks/*/fixture/` is its own Cargo workspa
 models:
   - id: gpt-oss-20b
     displayName: GPT OSS 20B
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: groq/gpt-oss-20b
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: gpt-oss-120b
     displayName: GPT OSS 120B
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: groq/gpt-oss-120b
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: deepseek-v4-flash
     displayName: DeepSeek V4 Flash
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: deepseek/deepseek-v4-flash
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: deepseek-v4-pro
     displayName: DeepSeek V4 Pro
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: deepseek/deepseek-v4-pro
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: kimi-k2-5
     displayName: Kimi K2.5
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: kimi/kimi-k2.5
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: nemotron-3-super
     displayName: Nemotron 3 Super
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: deepinfra/nemotron-3-super
     claudeModelStrategy: custom-model-option
     enabled: true
 
   - id: nemotron-3-nano
     displayName: Nemotron 3 Nano
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: deepinfra/nemotron-3-nano
     claudeModelStrategy: custom-model-option
     enabled: true
@@ -224,17 +224,17 @@ benchmark:
   outputDir: runs
   reportDir: reports
   claude:
-    baseUrl: https://bec.bytefuture.ai/v1
+    baseUrl: https://gateway.example
     outputFormat: json
     projectSettingsFile: .claude/settings.json
     disableExperimentalBetas: true
   judge:
     enabled: true
-    provider: models.bytefuture.ai
+    provider: anthropic-compatible-gateway
     model: anthropic/claude-opus-4-6
     minimumScore: 4
   article:
-    title: "Comparing Claude Code Tasks Across Models on ByteFuture"
+    title: "Comparing Claude Code Tasks Across Models"
     outputFile: reports/article.md
 ```
 
@@ -322,35 +322,37 @@ Example fixture settings:
 
 ## 11. Claude Command Execution
 
-Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with `ANTHROPIC_BASE_URL=https://bec.bytefuture.ai`, authenticate with the ByteFuture API key, and pass the selected model ID through Claude Code model selection.
+Claude Code supports routing requests through a custom Anthropic-compatible gateway. The runner should configure Claude Code with the configured gateway base URL, authenticate with a generic gateway token or API key, and pass the selected provider model ID through Claude Code model selection.
 
 The runner should execute a command equivalent to:
 
 ```bash
-ANTHROPIC_BASE_URL=https://bec.bytefuture.ai \
-ANTHROPIC_API_KEY="<bytefuture-api-key>" \
-ANTHROPIC_AUTH_TOKEN="<bytefuture-api-key>" \
-ANTHROPIC_CUSTOM_MODEL_OPTION="<bytefuture-model-id>" \
-ANTHROPIC_MODEL="<bytefuture-model-id>" \
+ANTHROPIC_BASE_URL=https://gateway.example \
+ANTHROPIC_API_KEY="<gateway-api-key>" \
+ANTHROPIC_AUTH_TOKEN="<gateway-bearer-token>" \
+ANTHROPIC_CUSTOM_MODEL_OPTION="<provider-model-id>" \
+ANTHROPIC_MODEL="<provider-model-id>" \
 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
 claude --bare -p "<task prompt>" \
   --settings .claude/settings.json \
-  --model "<bytefuture-model-id>" \
+  --model "<provider-model-id>" \
   --output-format json
 ```
 
 The preferred strategy is:
 
-1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to `bec.bytefuture.ai`; Claude Code appends Anthropic API paths like `/v1/messages` itself, so OpenAI-style `/v1` base URLs must be normalized before invocation.
-2. Use `ANTHROPIC_AUTH_TOKEN` for ByteFuture gateway authentication because it requires `Authorization: Bearer <key>`. The runner may derive this from `ANTHROPIC_API_KEY` for compatibility.
-3. Use `--model` and `ANTHROPIC_MODEL` with the exact ByteFuture model ID.
+1. Use `ANTHROPIC_BASE_URL` to route Claude Code requests to the configured gateway root. Do not include `/v1`; Claude Code appends Anthropic API paths like `/v1/messages` itself.
+2. Use `ANTHROPIC_AUTH_TOKEN` when the gateway requires `Authorization: Bearer <key>`. Use `ANTHROPIC_API_KEY` for direct Anthropic-style API key auth.
+3. Use `--model` and `ANTHROPIC_MODEL` with the exact provider model ID.
 4. Use `ANTHROPIC_CUSTOM_MODEL_OPTION` so Claude Code does not reject gateway-specific model IDs.
 5. Use `--settings .claude/settings.json` to load the Rust fixture's project-local permission policy.
 6. Use `--output-format json` so the runner can capture Claude Code session metadata.
 7. Use `--bare` for reproducible scripted runs while explicitly loading the settings file required by the fixture.
 8. Use `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` if the gateway rejects Anthropic-specific beta headers or tool-schema fields.
 
-ByteFuture model catalog checks should use the public `/api/models` endpoint. Do not rely on Claude Code gateway discovery for this benchmark unless ByteFuture also exposes a compatible `/v1/models` endpoint.
+For example, a gateway endpoint exposed at `https://custom-gateway.example` should be configured as `ANTHROPIC_BASE_URL=https://custom-gateway.example`.
+
+Model catalog checks, if added, should use the configured gateway's documented model-list endpoint. Do not assume that every gateway exposes the same discovery path.
 
 The runner must log the exact command strategy used, while redacting secrets.
 
@@ -358,8 +360,7 @@ Required environment variables should be documented in `.env.example`, for examp
 
 ```bash
 ANTHROPIC_AUTH_TOKEN=
-BYTEFUTURE_BASE_URL=https://bec.bytefuture.ai/v1
-TOKEN_STATION_DUMP_PATH=reports/token-station-usage.json
+ANTHROPIC_BASE_URL=https://gateway.example
 JUDGE_MODEL_ID=anthropic/claude-opus-4-6
 ```
 
@@ -374,7 +375,7 @@ Each task/model run should produce a JSON file.
   "modelId": "deepseek-v4-flash",
   "providerModelId": "deepseek/deepseek-v4-flash",
   "runIndex": 1,
-  "provider": "models.bytefuture.ai",
+  "provider": "anthropic-compatible-gateway",
   "startedAt": "2026-06-04T14:00:00Z",
   "finishedAt": "2026-06-04T14:03:12Z",
   "durationMs": 192000,
@@ -397,9 +398,6 @@ Each task/model run should produce a JSON file.
     "reason": "All required checks passed."
   },
   "tokens": {
-    "source": "token-station-backend-dump",
-    "correlation": "execution-time-window",
-    "dumpFile": "reports/token-station-usage.json",
     "input": 12000,
     "output": 3200,
     "cacheCreationInput": 0,
@@ -624,7 +622,7 @@ Failures should be recorded as structured results instead of crashing the entire
 Common failure cases:
 
 - `claude` command not found.
-- ByteFuture API authentication failed.
+- Gateway API authentication failed.
 - Model unavailable.
 - Claude JSON output missing token or timing fields.
 - Task setup failed.
@@ -635,7 +633,7 @@ Common failure cases:
 
 The MVP is complete when:
 
-- A user can configure the seven canonical model IDs from `models.bytefuture.ai`:
+- A user can configure seven canonical provider model IDs through the selected gateway:
   - `groq/gpt-oss-20b`
   - `groq/gpt-oss-120b`
   - `deepseek/deepseek-v4-flash`
@@ -710,7 +708,7 @@ The MVP is complete when:
 
 ## 22. Risks
 
-- Some ByteFuture model IDs may not match Claude Code model validation unless custom model configuration is used.
+- Some gateway model IDs may not match Claude Code model validation unless custom model configuration is used.
 - LLM judge results can be biased or inconsistent.
 - Three runs per model/task are better than one run but still not statistically exhaustive.
 - Some models may optimize for short output but fail hidden requirements.

@@ -213,9 +213,6 @@ pub struct JudgeResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsage {
-    pub source: String,
-    pub correlation: String,
-    pub dump_file: String,
     pub input: Option<i64>,
     pub output: Option<i64>,
     pub cache_creation_input: Option<i64>,

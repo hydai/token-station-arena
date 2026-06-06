@@ -50,7 +50,7 @@ mod tests {
         ModelConfig {
             id: id.to_string(),
             display_name: id.to_uppercase(),
-            provider: "models.bytefuture.ai".to_string(),
+            provider: "anthropic-compatible-gateway".to_string(),
             model: provider_model.to_string(),
             claude_model_strategy: "custom-model-option".to_string(),
             enabled,
