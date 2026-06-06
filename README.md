@@ -84,6 +84,12 @@ Run all configured tasks against all enabled models:
 cargo run --release -- benchmark --tasks all --models all
 ```
 
+Run several task/model pairs in parallel:
+
+```bash
+cargo run --release -- benchmark --tasks all --models all --jobs 3
+```
+
 Skip the LLM judge when you only want deterministic checks:
 
 ```bash
@@ -98,6 +104,7 @@ Useful options:
 | `--models` | `all` or `deepseek-v4-flash,kimi-k2-5` | Select model IDs or provider model IDs. |
 | `--runs` | `3` | Number of independent runs per task/model pair. |
 | `--timeout` | `1800` | Timeout per Claude run, in seconds. |
+| `--jobs` | `3` | Number of task/model runs to execute concurrently; overrides `benchmark.jobs` and must be at least `1`. |
 | `--skip-judge` | | Skip LLM judge scoring. |
 | `--skip-article` | | Do not regenerate the article after benchmark completion. |
 | `--dry-run` | | Print the planned run matrix and command strategy only. |
